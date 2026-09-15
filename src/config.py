@@ -1,7 +1,6 @@
 """Central configuration, loaded from environment / the .env file.
 
-Everything the bot and dashboard need to know is read here in one place so
-there is a single source of truth. Import `settings` from this module.
+Single source of truth for the engine and dashboard. Import `settings`.
 """
 from __future__ import annotations
 
@@ -11,9 +10,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load variables from a .env file in the project root (if present). Real
-# environment variables always win over the file, which is what we want on the
-# server where systemd may inject them.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -27,18 +23,15 @@ def _get_bool(name: str, default: bool) -> bool:
 
 @dataclass(frozen=True)
 class Settings:
-    # Alpaca
-    api_key: str
-    secret_key: str
-    paper: bool
+    # Market data (Alpaca crypto data works without keys; keys raise rate limits)
+    alpaca_api_key: str
+    alpaca_secret_key: str
 
-    # Bot
-    trade_symbol: str
+    # Engine
     poll_interval_seconds: int
-    order_notional_usd: float
     bar_timeframe: str
     lookback_hours: int
-    dry_run: bool
+    default_symbol: str
 
     # Storage
     database_path: Path
@@ -47,32 +40,40 @@ class Settings:
     dashboard_host: str
     dashboard_port: int
 
+    # AI via OpenRouter (OpenAI-compatible API)
+    openrouter_api_key: str
+    openrouter_model: str
+    openrouter_base_url: str
+
+    # Learning loop
+    ai_review_min_trades: int   # min closed trades before a review runs
+    ai_min_winrate: float       # review triggers when win-rate is below this
+
     @property
-    def has_credentials(self) -> bool:
-        return bool(self.api_key) and bool(self.secret_key) and "your_" not in self.api_key
+    def ai_enabled(self) -> bool:
+        return bool(self.openrouter_api_key) and "your_" not in self.openrouter_api_key
 
 
 def load_settings() -> Settings:
-    db_path = os.getenv("DATABASE_PATH", "data/stonks.db")
-    # Resolve relative DB paths against the project root so the bot and the
-    # dashboard always agree on the same file no matter their working dir.
-    db_path_resolved = Path(db_path)
-    if not db_path_resolved.is_absolute():
-        db_path_resolved = PROJECT_ROOT / db_path_resolved
+    db_path = Path(os.getenv("DATABASE_PATH", "data/stonks.db"))
+    if not db_path.is_absolute():
+        db_path = PROJECT_ROOT / db_path
 
     return Settings(
-        api_key=os.getenv("ALPACA_API_KEY", "").strip(),
-        secret_key=os.getenv("ALPACA_SECRET_KEY", "").strip(),
-        paper=_get_bool("ALPACA_PAPER", True),
-        trade_symbol=os.getenv("TRADE_SYMBOL", "BTC/USD").strip(),
+        alpaca_api_key=os.getenv("ALPACA_API_KEY", "").strip(),
+        alpaca_secret_key=os.getenv("ALPACA_SECRET_KEY", "").strip(),
         poll_interval_seconds=int(os.getenv("POLL_INTERVAL_SECONDS", "60")),
-        order_notional_usd=float(os.getenv("ORDER_NOTIONAL_USD", "100")),
         bar_timeframe=os.getenv("BAR_TIMEFRAME", "15Min").strip(),
-        lookback_hours=int(os.getenv("LOOKBACK_HOURS", "48")),
-        dry_run=_get_bool("DRY_RUN", False),
-        database_path=db_path_resolved,
+        lookback_hours=int(os.getenv("LOOKBACK_HOURS", "72")),
+        default_symbol=os.getenv("TRADE_SYMBOL", "BTC/USD").strip(),
+        database_path=db_path,
         dashboard_host=os.getenv("DASHBOARD_HOST", "127.0.0.1").strip(),
         dashboard_port=int(os.getenv("DASHBOARD_PORT", "8000")),
+        openrouter_api_key=os.getenv("OPENROUTER_API_KEY", "").strip(),
+        openrouter_model=os.getenv("OPENROUTER_MODEL", "anthropic/claude-3.5-sonnet").strip(),
+        openrouter_base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip(),
+        ai_review_min_trades=int(os.getenv("AI_REVIEW_MIN_TRADES", "5")),
+        ai_min_winrate=float(os.getenv("AI_MIN_WINRATE", "0.45")),
     )
 
 

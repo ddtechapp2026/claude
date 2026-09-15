@@ -1,78 +1,86 @@
 # Stonks 📈
 
-A starter **crypto trading bot + web dashboard** for
-[Alpaca](https://alpaca.markets/) **paper trading**, designed to run on an
-Oracle Cloud (or any) Ubuntu VM and be viewed remotely from another network.
+A **10-bot crypto trading lab + web dashboard** for
+[Alpaca](https://alpaca.markets/) market data, designed to run on an Oracle
+Cloud (or any) Ubuntu VM and be controlled remotely from another network.
 
-- **Bot** — polls crypto prices, runs your strategy, places paper orders, logs
-  everything to SQLite. Ships with a clean *strategy skeleton* so the whole
-  pipeline works end-to-end; you just fill in the buy/sell rules.
-- **Dashboard** — a FastAPI web page showing account equity, positions, P/L,
-  recent signals & trades, and an equity chart. Behind an nginx password login.
-- **Deploy** — `systemd` services (auto-restart, survive reboots) + nginx
-  reverse proxy + a one-shot VM setup script.
+- **10 independent bots**, each with its own strategy and its own **virtual
+  wallet** (own cash, position, P/L, stop-loss). They trade *simulated* money
+  priced off **real live Alpaca crypto prices**, so bots never interfere with
+  each other and you can compare strategies head-to-head.
+- **Tabbed dashboard** — one tab per bot: equity chart, wallet stats, trade &
+  signal history, and full controls. Behind an nginx password login.
+- **Plain-English strategies** — describe how a bot should trade in normal words
+  ("buy when RSI drops below 30, sell when up 3% or down 2%, use 40% of cash")
+  and the AI converts it into safe trading rules.
+- **Learns from mistakes** — after several closed trades, each bot is reviewed
+  and its risk/size parameters are auto-tuned **within guardrails**.
+- **Per-bot controls** — on/off, allocated cash, biggest trade, stop-loss,
+  take-profit, and a run-until deadline.
 
-> ⚠️ Trades **paper money** by default (`ALPACA_PAPER=true`). Nothing touches
-> real funds unless you deliberately switch to live keys.
+> ⚠️ Every bot trades a **simulated wallet** — no real orders are ever sent.
+> This is a research/paper sandbox. Not financial advice.
 
 ---
 
 ## Architecture
 
 ```
-        Alpaca API  (paper account + crypto market data)
-              ▲                         ▲
-              │ orders / account        │ price bars
-              │                         │
-        ┌─────┴──────┐            ┌─────┴───────────┐
-        │  src/bot   │  writes    │ src/dashboard   │  reads
-        │ (strategy) ├──────────► │  (FastAPI)      │ ◄─── you (browser)
-        └────────────┘  SQLite    └─────────────────┘      via nginx + login
-                        data/stonks.db
+     Alpaca crypto market data (real prices, no key required)
+                          │
+                          ▼
+             ┌───────────────────────────┐
+             │        src/engine         │  runs every enabled bot each cycle:
+             │  virtual wallet per bot   │  mark-to-market → risk checks →
+             │  risk + strategy + learn  │  strategy spec → buy/sell (sim) →
+             └───────────┬───────────────┘  learn from closed trades
+                         │ SQLite (data/stonks.db)
+             ┌───────────┴───────────────┐        OpenRouter (AI)
+             │      src/dashboard        │◄──────  plain-English → rules,
+             │  tabbed FastAPI UI + API  │         trade reviews
+             └───────────┬───────────────┘
+                         ▼
+                    you (browser)  ── via nginx + password login
 ```
 
-The bot and dashboard are independent processes that communicate only through
-the SQLite database, so either can restart without affecting the other.
+The engine and dashboard are separate processes sharing only the SQLite DB, so
+either can restart independently. The dashboard writes config; the engine reads
+it fresh every cycle, so on/off and control changes take effect immediately.
 
 ## Project layout
 
 ```
-Stonks/
 ├── src/
-│   ├── config.py            # all settings, read from .env
-│   ├── database.py          # SQLite storage (shared bot ↔ dashboard)
-│   ├── alpaca_client.py     # wraps the Alpaca SDK (account, data, orders)
-│   ├── strategy.py          # >>> YOUR TRADING LOGIC GOES HERE <<<
-│   ├── bot.py               # the main loop:  python -m src.bot
+│   ├── config.py           # settings from .env
+│   ├── market.py           # live crypto prices (Alpaca), short-cached
+│   ├── indicators.py       # SMA / EMA / RSI / pct-change / high / low
+│   ├── strategy_engine.py  # SAFE interpreter for JSON strategy specs
+│   ├── llm.py              # OpenRouter: English→rules + learning (rule fallback)
+│   ├── database.py         # SQLite: bots, wallets, trades, equity, reviews
+│   ├── seed.py             # creates the 10 starter bots
+│   ├── engine.py           # the supervisor loop:  python -m src.engine
 │   └── dashboard/
-│       ├── app.py           # FastAPI app + JSON API
+│       ├── app.py          # FastAPI UI + control API
 │       └── templates/index.html
-├── deploy/
-│   ├── setup_vm.sh          # one-shot VM provisioning
-│   ├── stonks-bot.service   # systemd unit for the bot
-│   ├── stonks-dashboard.service
-│   └── nginx-stonks.conf    # reverse proxy + Basic Auth login
-├── docs/ORACLE_SETUP.md     # full step-by-step Oracle Cloud guide
-├── .env.example             # copy to .env and fill in
-└── requirements.txt
+├── deploy/                 # systemd units, nginx (+Basic Auth), setup_vm.sh
+├── docs/ORACLE_SETUP.md    # full Oracle Cloud walkthrough
+├── install_stonks.sh       # whole project in one file (no-git install)
+└── .env.example
 ```
 
 ## Quick start (on the Oracle VM)
 
-Full walkthrough — including creating the VM and opening the Oracle Cloud
-firewall — is in **[docs/ORACLE_SETUP.md](docs/ORACLE_SETUP.md)**.
-
-This is a **public** repo, so the VM can pull it directly with no GitHub login.
-Once SSH'd into the VM:
+Full walkthrough (VM creation + Oracle firewall) is in
+**[docs/ORACLE_SETUP.md](docs/ORACLE_SETUP.md)**. This repo is **public**, so the
+VM pulls it with no GitHub login:
 
 ```bash
 git clone https://github.com/ddtechapp2026/claude.git Stonks && cd Stonks
-cp .env.example .env && nano .env      # add your Alpaca PAPER keys
+cp .env.example .env && nano .env      # add your OpenRouter key (Alpaca keys optional)
 ./deploy/setup_vm.sh                    # installs & starts everything
 ```
 
-Prefer a single file? Grab just the self-contained installer, which recreates
-the whole project without cloning:
+Single-file alternative (no git):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ddtechapp2026/claude/main/install_stonks.sh -o install_stonks.sh
@@ -80,76 +88,67 @@ bash install_stonks.sh && cd ~/Stonks
 ```
 
 Then open port 80 in the **Oracle Cloud console** (VCN Security List ingress —
-this is the step everyone forgets; see docs step 5) and browse to
+the step everyone forgets; see docs step 5) and browse to
 `http://YOUR_VM_PUBLIC_IP/`.
 
 ## Run it locally first (recommended)
 
-Before touching the VM, you can run the whole thing on your own machine:
-
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env       # add your Alpaca PAPER keys
+cp .env.example .env        # add OPENROUTER_API_KEY (optional but enables AI)
 
-# terminal 1 — the bot
-python -m src.bot
+# terminal 1 — the engine (seeds 10 bots on first run, all OFF)
+python -m src.engine
 
 # terminal 2 — the dashboard
 uvicorn src.dashboard.app:app --reload --port 8000
-# open http://localhost:8000
+# open http://localhost:8000, pick a bot tab, turn it ON
 ```
 
-## Writing your strategy
+## Using it
 
-Open `src/strategy.py` and implement the `decide()` function. It receives a
-list of recent close prices and whether you currently hold a position, and
-returns `Decision(BUY|SELL|HOLD, "reason")`:
+1. Each bot starts **OFF**. Open its tab and hit **Turn ON**.
+2. **Set the strategy in plain English** in the "How this bot trades" box and
+   click *Translate & save*. With an OpenRouter key the AI writes the rules;
+   without one, a built-in parser handles common phrasings.
+3. **Set the controls**: allocated cash, biggest trade, stop-loss %,
+   take-profit %, a run-until deadline (blank = forever), and auto-learn on/off.
+4. Watch the equity curve, trades, and the **AI learning log** (what it changed
+   and why) fill in.
 
-```python
-def decide(closes, *, has_position):
-    fast = _sma(closes, 10)
-    slow = _sma(closes, 30)
-    if fast is None or slow is None:
-        return Decision(HOLD, "warming up")
-    if fast > slow and not has_position:
-        return Decision(BUY,  f"fast {fast:.0f} > slow {slow:.0f}")
-    if fast < slow and has_position:
-        return Decision(SELL, f"fast {fast:.0f} < slow {slow:.0f}")
-    return Decision(HOLD, "no cross")
-```
+### How strategies are represented (safe by design)
 
-That exact example is included, commented out, in the file. The bot enforces
-the safety contract: a `BUY` is ignored if you already hold the symbol, and a
-`SELL` is ignored if you don't — so you can return signals freely.
-
-Tune behaviour in `.env`: `TRADE_SYMBOL`, `BAR_TIMEFRAME`, `LOOKBACK_HOURS`,
-`ORDER_NOTIONAL_USD`, `POLL_INTERVAL_SECONDS`, and the `DRY_RUN` safety switch.
+Plain English is translated into a small **JSON rule spec** — never executable
+code — that the engine interprets. Available terms: `price`, `pct_from_entry`,
+`sma(N)`, `ema(N)`, `rsi(N)`, `pct_change(N)`, `high(N)`, `low(N)`, compared with
+`< > <= >= ==` and combined with all/any. Anything the AI returns is validated
+and rejected if it references unknown terms, so a bad translation can't run
+arbitrary logic.
 
 ## Configuration reference
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` | Alpaca **paper** API keys | — |
-| `ALPACA_PAPER` | `true` = paper trading (keep this) | `true` |
-| `TRADE_SYMBOL` | Crypto pair, Alpaca format | `BTC/USD` |
-| `POLL_INTERVAL_SECONDS` | Seconds between decision cycles | `60` |
-| `ORDER_NOTIONAL_USD` | Dollar size of each buy | `100` |
+| `OPENROUTER_API_KEY` | Enables AI strategy translation + reviews | — |
+| `OPENROUTER_MODEL` | Any OpenRouter model slug | `anthropic/claude-3.5-sonnet` |
+| `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` | Optional; raise data rate limits | — |
+| `TRADE_SYMBOL` | Default symbol for seeded bots | `BTC/USD` |
+| `POLL_INTERVAL_SECONDS` | Seconds between engine cycles | `60` |
 | `BAR_TIMEFRAME` | `1Min`/`5Min`/`15Min`/`1Hour`/`1Day` | `15Min` |
-| `LOOKBACK_HOURS` | History pulled for indicators | `48` |
-| `DRY_RUN` | Log trades but don't send them | `false` |
+| `LOOKBACK_HOURS` | History pulled for indicators | `72` |
+| `AI_REVIEW_MIN_TRADES` | Closed trades between learning reviews | `5` |
+| `AI_MIN_WINRATE` | Reviews tighten risk below this win-rate | `0.45` |
 | `DATABASE_PATH` | SQLite file | `data/stonks.db` |
 | `DASHBOARD_HOST` / `DASHBOARD_PORT` | Dashboard bind address | `127.0.0.1:8000` |
 
 ## Security notes
 
-- **Never commit `.env`** — it holds your keys and is git-ignored.
-- The dashboard binds to `127.0.0.1` only; nginx is the sole exposed service
-  and requires a password.
-- Plain HTTP transmits that password reversibly. Add HTTPS (Let's Encrypt via
-  certbot, or a Cloudflare Tunnel) — see docs step 8.
-- Restrict the Oracle ingress rule to your remote computer's IP if it's stable,
-  instead of `0.0.0.0/0`.
-- Keep `ALPACA_PAPER=true` until you fully trust your strategy. Going live
-  trades real money and is entirely at your own risk. This is not financial
-  advice.
+- **Never commit `.env`** — it holds your OpenRouter key and is git-ignored.
+- The dashboard binds to `127.0.0.1` only; nginx is the sole exposed service and
+  requires a password. Its controls (on/off, config) are protected by that same
+  login, so keep it strong.
+- Plain HTTP transmits the password reversibly — add HTTPS (certbot or a
+  Cloudflare Tunnel), see docs step 8.
+- Everything is simulated; there is no live-trading path in this code. Adding one
+  would be entirely at your own risk. Not financial advice.

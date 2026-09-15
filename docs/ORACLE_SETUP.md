@@ -77,26 +77,30 @@ No `scp`? You can instead paste it: on the VM run `cat > install_stonks.sh`,
 paste the file's contents, press `Enter` then `Ctrl+D`, and run
 `bash install_stonks.sh`.
 
-## 4. Get your Alpaca paper-trading keys
+## 4. Get your API keys
 
-1. Create a free account at <https://alpaca.markets/>.
-2. In the dashboard, switch to **Paper Trading** (toggle, top-left).
-3. Go to **Home → API Keys → Generate New Key**.
-4. Copy the **Key ID** and **Secret Key** (the secret is shown only once).
+The bots trade **simulated wallets** priced off Alpaca crypto data, so the only
+key you really need is for the **AI** features:
+
+1. **OpenRouter (for the AI):** sign up at <https://openrouter.ai/>, then
+   **Keys → Create Key**. This powers plain-English strategies and the learning
+   loop. Without it, a built-in rule-based parser is used instead.
+2. **Alpaca (optional):** the crypto price data works with no key. Adding free
+   **paper** keys from <https://app.alpaca.markets/> just raises your rate
+   limits.
 
 Now create your `.env` on the VM:
 
 ```bash
 cp .env.example .env
-nano .env      # paste ALPACA_API_KEY and ALPACA_SECRET_KEY, keep ALPACA_PAPER=true
+nano .env      # paste OPENROUTER_API_KEY (and Alpaca keys if you have them)
 ```
 
 Save with `Ctrl+O`, `Enter`, then exit with `Ctrl+X`.
 
-> Tip: start with `DRY_RUN=true` in `.env` for your very first run. The bot will
-> log the trades it *would* make without sending any orders. Set it back to
-> `false` once you trust it. (With the default skeleton strategy it holds and
-> never trades anyway, so this only matters once you add real logic.)
+> Note: nothing here ever places a real order — every bot uses a simulated
+> wallet. It is safe to run before you've tuned anything; bots start **OFF** and
+> you turn them on individually from the dashboard.
 
 ## 5. Open the port in Oracle Cloud (the virtual firewall)
 

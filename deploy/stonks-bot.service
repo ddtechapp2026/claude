@@ -13,7 +13,7 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/Stonks
 # Use the virtualenv's python so dependencies are found.
-ExecStart=/home/ubuntu/Stonks/.venv/bin/python -m src.bot
+ExecStart=/home/ubuntu/Stonks/.venv/bin/python -m src.engine
 Restart=always
 RestartSec=10
 # Restart if it dies, but back off if it is crash-looping.

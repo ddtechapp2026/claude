@@ -1,62 +1,48 @@
-"""FastAPI dashboard.
+"""FastAPI dashboard + control API for the multi-bot engine.
 
 Run with:  uvicorn src.dashboard.app:app --host 127.0.0.1 --port 8000
 
-Serves a single HTML page plus a JSON API the page polls for live updates.
-Live account/position data comes from Alpaca; history comes from the SQLite DB
-the bot writes to. Designed to sit behind nginx (see deploy/), which is what
-adds the password login and TLS.
+Read endpoints power the tabbed UI; write endpoints let you turn bots on/off,
+edit their controls, and set a strategy in plain English (translated to a spec
+via OpenRouter, with a rule-based fallback). Sits behind nginx Basic Auth.
 """
 from __future__ import annotations
 
-import time
+import json
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 from starlette.requests import Request
 
-from ..alpaca_client import AlpacaClient
+from .. import llm, strategy_engine
 from ..config import settings
 from ..database import Database
 
 app = FastAPI(title="Stonks Dashboard")
-
 _templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 _db = Database(settings.database_path)
 
-# Alpaca calls are cached briefly so a page full of viewers can't hammer the API.
-_cache: dict = {"account": None, "positions": None, "ts": 0.0}
-_CACHE_TTL = 10.0  # seconds
 
-
-def _get_client() -> AlpacaClient | None:
-    if not settings.has_credentials:
-        return None
+def _bot_view(bot: dict) -> dict:
+    wallet = _db.get_wallet(bot["id"]) or {}
+    equity = wallet.get("equity", bot["starting_cash"])
+    pnl = equity - bot["starting_cash"]
     try:
-        return AlpacaClient(settings)
+        spec = json.loads(bot["strategy_spec"] or "{}")
+        summary = strategy_engine.describe(spec)
     except Exception:  # noqa: BLE001
-        return None
-
-
-def _live_snapshot() -> dict:
-    """Account + positions from Alpaca, cached for a few seconds."""
-    now = time.monotonic()
-    if _cache["account"] is not None and (now - _cache["ts"]) < _CACHE_TTL:
-        return {"account": _cache["account"], "positions": _cache["positions"], "error": None}
-
-    client = _get_client()
-    if client is None:
-        return {"account": None, "positions": [], "error": "Alpaca credentials not configured (.env)."}
-
-    try:
-        account = client.get_account()
-        positions = client.get_positions()
-        _cache.update(account=account, positions=positions, ts=now)
-        return {"account": account, "positions": positions, "error": None}
-    except Exception as exc:  # noqa: BLE001
-        return {"account": None, "positions": [], "error": f"Alpaca error: {exc}"}
+        summary = "(invalid strategy)"
+    return {
+        **bot,
+        "wallet": wallet,
+        "equity": equity,
+        "pnl": pnl,
+        "pnl_pct": (pnl / bot["starting_cash"] * 100) if bot["starting_cash"] else 0.0,
+        "strategy_summary": summary,
+    }
 
 
 @app.get("/healthz")
@@ -64,29 +50,100 @@ def healthz() -> dict:
     return {"ok": True}
 
 
-@app.get("/api/status")
-def api_status() -> JSONResponse:
-    live = _live_snapshot()
-    payload = {
-        "config": {
-            "symbol": settings.trade_symbol,
-            "paper": settings.paper,
-            "dry_run": settings.dry_run,
-            "order_notional_usd": settings.order_notional_usd,
-            "poll_interval_seconds": settings.poll_interval_seconds,
-        },
-        "bot_status": _db.all_status(),
-        "account": live["account"],
-        "positions": live["positions"],
-        "trades": _db.recent_trades(25),
-        "signals": _db.recent_signals(15),
-        "equity_curve": _db.equity_curve(500),
-        "error": live["error"],
-    }
-    return JSONResponse(payload)
+@app.get("/api/bots")
+def api_bots() -> JSONResponse:
+    bots = [_bot_view(b) for b in _db.list_bots()]
+    return JSONResponse({"bots": bots, "ai_enabled": settings.ai_enabled,
+                         "model": settings.openrouter_model})
+
+
+@app.get("/api/bots/{bot_id}")
+def api_bot(bot_id: int) -> JSONResponse:
+    bot = _db.get_bot(bot_id)
+    if not bot:
+        raise HTTPException(404, "bot not found")
+    return JSONResponse({
+        "bot": _bot_view(bot),
+        "trades": _db.recent_trades(bot_id, 30),
+        "signals": _db.recent_signals(bot_id, 15),
+        "equity_curve": _db.equity_curve(bot_id, 500),
+        "reviews": _db.recent_reviews(bot_id, 10),
+    })
+
+
+class ConfigIn(BaseModel):
+    name: str | None = None
+    symbol: str | None = None
+    starting_cash: float | None = None
+    max_trade_usd: float | None = None
+    stop_loss_pct: float | None = None       # accepts percent (5) or fraction (0.05)
+    take_profit_pct: float | None = None
+    run_until: str | None = None             # ISO ts, "" clears it
+    auto_adjust: bool | None = None
+
+
+def _norm_pct(v: float | None) -> float | None:
+    if v is None:
+        return None
+    return v / 100.0 if v > 1 else v  # treat 5 as 5%, 0.05 as 5%
+
+
+@app.post("/api/bots/{bot_id}/config")
+def api_config(bot_id: int, cfg: ConfigIn) -> JSONResponse:
+    bot = _db.get_bot(bot_id)
+    if not bot:
+        raise HTTPException(404, "bot not found")
+    fields: dict = {}
+    for key in ("name", "symbol", "max_trade_usd", "starting_cash"):
+        val = getattr(cfg, key)
+        if val is not None:
+            fields[key] = val
+    if cfg.stop_loss_pct is not None:
+        fields["stop_loss_pct"] = _norm_pct(cfg.stop_loss_pct)
+    if cfg.take_profit_pct is not None:
+        fields["take_profit_pct"] = _norm_pct(cfg.take_profit_pct)
+    if cfg.run_until is not None:
+        fields["run_until"] = cfg.run_until or None
+    if cfg.auto_adjust is not None:
+        fields["auto_adjust"] = 1 if cfg.auto_adjust else 0
+    _db.update_bot(bot_id, **fields)
+    return JSONResponse({"ok": True, "bot": _bot_view(_db.get_bot(bot_id))})
+
+
+@app.post("/api/bots/{bot_id}/toggle")
+def api_toggle(bot_id: int) -> JSONResponse:
+    bot = _db.get_bot(bot_id)
+    if not bot:
+        raise HTTPException(404, "bot not found")
+    new_state = 0 if bot["enabled"] else 1
+    _db.update_bot(bot_id, enabled=new_state, status="running" if new_state else "idle")
+    return JSONResponse({"ok": True, "enabled": bool(new_state)})
+
+
+class StrategyIn(BaseModel):
+    text: str
+
+
+@app.post("/api/bots/{bot_id}/strategy")
+def api_strategy(bot_id: int, body: StrategyIn) -> JSONResponse:
+    bot = _db.get_bot(bot_id)
+    if not bot:
+        raise HTTPException(404, "bot not found")
+    spec, summary, source = llm.translate_strategy(body.text)
+    _db.update_bot(bot_id, strategy_text=body.text, strategy_spec=json.dumps(spec))
+    return JSONResponse({"ok": True, "summary": summary, "source": source, "spec": spec})
+
+
+@app.post("/api/bots/{bot_id}/reset")
+def api_reset(bot_id: int) -> JSONResponse:
+    bot = _db.get_bot(bot_id)
+    if not bot:
+        raise HTTPException(404, "bot not found")
+    _db.update_bot(bot_id, enabled=0, status="idle", last_reason="reset")
+    _db.reset_wallet(bot_id, bot["starting_cash"])
+    return JSONResponse({"ok": True})
 
 
 @app.get("/")
 def index(request: Request):
-    # Starlette signature: request first, then template name.
     return _templates.TemplateResponse(request, "index.html")

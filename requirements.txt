@@ -1,8 +1,9 @@
 # Stonks - crypto trading bot + dashboard
 # Pinned to reasonably recent, compatible versions. Adjust as needed.
 
-alpaca-py>=0.33.0        # Official Alpaca SDK (trading + market data)
+alpaca-py>=0.33.0        # Alpaca SDK - used here for crypto market data
 fastapi>=0.115.0         # Dashboard web framework
 uvicorn[standard]>=0.30.0  # ASGI server for the dashboard
 jinja2>=3.1.0            # HTML templating for the dashboard
 python-dotenv>=1.0.0     # Loads settings from the .env file
+requests>=2.31.0         # Calls the OpenRouter API for the AI features

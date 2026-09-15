@@ -6,200 +6,221 @@
   <title>Stonks Dashboard</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
-    :root {
-      --bg: #0d1117; --panel: #161b22; --border: #30363d;
-      --text: #e6edf3; --muted: #8b949e; --green: #3fb950; --red: #f85149;
-      --accent: #58a6ff;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; background: var(--bg); color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      padding: 16px;
-    }
-    header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
-    h1 { font-size: 20px; margin: 0; }
-    h1 span { color: var(--accent); }
-    .muted { color: var(--muted); font-size: 13px; }
-    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
-    .badge.paper { background: #1f6feb33; color: var(--accent); }
-    .badge.live { background: #f8514933; color: var(--red); }
-    .badge.dry { background: #d2992222; color: #d29922; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
-    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
-    .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
-    .card .value { font-size: 24px; font-weight: 600; margin-top: 6px; }
-    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 16px; }
-    .panel h2 { font-size: 14px; margin: 0 0 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
-    th { color: var(--muted); font-weight: 600; }
-    .pos { color: var(--green); } .neg { color: var(--red); }
-    .right { text-align: right; }
-    .err { background: #f8514922; border: 1px solid var(--red); color: #ffb4ae; padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; }
-    .tag { font-family: ui-monospace, monospace; font-size: 12px; padding: 1px 6px; border-radius: 4px; background: #30363d; }
-    .tag.BUY { background: #3fb95033; color: var(--green); }
-    .tag.SELL { background: #f8514933; color: var(--red); }
-    .tag.HOLD { background: #30363d; color: var(--muted); }
-    .overflow { overflow-x: auto; }
-    canvas { max-height: 280px; }
+    :root{--bg:#0d1117;--panel:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;
+      --green:#3fb950;--red:#f85149;--accent:#58a6ff;--amber:#d29922;}
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);padding:16px;
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+    header{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+    h1{font-size:20px;margin:0}h1 span{color:var(--accent)}
+    .muted{color:var(--muted);font-size:13px}
+    .tabs{display:flex;gap:8px;overflow-x:auto;padding-bottom:8px;margin-bottom:16px}
+    .tab{flex:0 0 auto;background:var(--panel);border:1px solid var(--border);border-radius:10px;
+      padding:10px 12px;cursor:pointer;min-width:130px;transition:border-color .15s}
+    .tab:hover{border-color:var(--accent)}
+    .tab.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+    .tab .name{font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px}
+    .tab .sub{font-size:12px;margin-top:4px}
+    .dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+    .dot.on{background:var(--green)}.dot.off{background:var(--muted)}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+    .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px}
+    .card .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+    .card .value{font-size:22px;font-weight:600;margin-top:6px}
+    .panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px}
+    .panel h2{font-size:14px;margin:0 0 12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+    .pos{color:var(--green)}.neg{color:var(--red)}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--border);white-space:nowrap}
+    th{color:var(--muted);font-weight:600}.right{text-align:right}
+    .overflow{overflow-x:auto}
+    .tag{font-family:ui-monospace,monospace;font-size:12px;padding:1px 6px;border-radius:4px;background:#30363d}
+    .tag.BUY{background:#3fb95033;color:var(--green)}.tag.SELL{background:#f8514933;color:var(--red)}
+    .tag.HOLD{background:#30363d;color:var(--muted)}
+    button{font:inherit;border:1px solid var(--border);background:#21262d;color:var(--text);
+      padding:8px 14px;border-radius:8px;cursor:pointer}
+    button:hover{border-color:var(--accent)}
+    button.primary{background:var(--accent);color:#04101f;border-color:var(--accent);font-weight:600}
+    button.on{background:var(--green);color:#04140a;border-color:var(--green);font-weight:600}
+    button.off{background:#21262d}
+    button.danger:hover{border-color:var(--red);color:var(--red)}
+    label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+    input,select,textarea{width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);
+      border-radius:8px;padding:8px;font:inherit}
+    textarea{min-height:70px;resize:vertical}
+    .formgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:12px}
+    .banner{padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:12px}
+    .banner.ok{background:#3fb95022;border:1px solid var(--green)}
+    .banner.warn{background:#d2992222;border:1px solid var(--amber)}
+    .pill{font-size:11px;padding:2px 8px;border-radius:999px;background:#30363d;color:var(--muted)}
+    .pill.ai{background:#1f6feb33;color:var(--accent)}
   </style>
 </head>
 <body>
   <header>
-    <h1><span>Stonks</span> &middot; crypto paper-trading dashboard</h1>
-    <div class="muted">Updated <span id="updated">-</span> &middot; auto-refresh 10s</div>
+    <h1><span>Stonks</span> &middot; multi-bot control center</h1>
+    <div class="muted">AI: <span id="ai-state">-</span> &middot; updated <span id="updated">-</span></div>
   </header>
 
-  <div id="error-box"></div>
+  <div class="tabs" id="tabs"></div>
+  <div id="detail"></div>
 
-  <div class="grid" id="stat-cards"></div>
+<script>
+const fmtUsd=n=>(n==null)?"-":"$"+Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtTime=iso=>{try{return new Date(iso).toISOString().replace("T"," ").slice(0,16)}catch{return iso||"-"}};
+const el=id=>document.getElementById(id);
+const pct=n=>(n==null)?"-":(Number(n)*100).toFixed(1)+"%";
+let currentBotId=null, chart=null, bots=[];
+
+async function api(url,opts){const r=await fetch(url,{cache:"no-store",...opts});
+  if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||r.statusText);return r.json();}
+
+function renderTabs(){
+  el("tabs").innerHTML = bots.map(b=>{
+    const cls = b.id===currentBotId?"tab active":"tab";
+    const pnlCls = b.pnl>=0?"pos":"neg";
+    return `<div class="${cls}" onclick="selectBot(${b.id})">
+      <div class="name"><span class="dot ${b.enabled?'on':'off'}"></span>${b.name}</div>
+      <div class="sub"><span class="${pnlCls}">${fmtUsd(b.equity)} (${b.pnl>=0?'+':''}${b.pnl_pct.toFixed(1)}%)</span></div>
+    </div>`;}).join("");
+}
+
+function detailHTML(d){
+  const b=d.bot, w=b.wallet||{};
+  const held = (w.position_qty||0)>0;
+  const runUntilVal = b.run_until ? b.run_until.slice(0,16) : "";
+  return `
+  <div class="grid">
+    <div class="card"><div class="label">Equity</div><div class="value">${fmtUsd(b.equity)}</div></div>
+    <div class="card"><div class="label">Total P/L</div><div class="value ${b.pnl>=0?'pos':'neg'}">${fmtUsd(b.pnl)} (${b.pnl>=0?'+':''}${b.pnl_pct.toFixed(1)}%)</div></div>
+    <div class="card"><div class="label">Cash</div><div class="value">${fmtUsd(w.cash)}</div></div>
+    <div class="card"><div class="label">Position</div><div class="value">${held?Number(w.position_qty).toFixed(6):'flat'}</div></div>
+    <div class="card"><div class="label">Realized P/L</div><div class="value ${(w.realized_pnl||0)>=0?'pos':'neg'}">${fmtUsd(w.realized_pnl)}</div></div>
+    <div class="card"><div class="label">State</div><div class="value" style="font-size:15px">${b.enabled?'<span class="pos">running</span>':'<span class="muted">off</span>'} · <span class="muted">${b.status||''}</span></div></div>
+  </div>
 
   <div class="panel">
-    <h2>Equity curve</h2>
-    <canvas id="equityChart"></canvas>
+    <div class="row" style="justify-content:space-between">
+      <div><b>${b.name}</b> <span class="pill">${b.symbol}</span> ${b.auto_adjust?'<span class="pill ai">auto-learn on</span>':''}</div>
+      <div class="row">
+        <button class="${b.enabled?'on':'off'}" onclick="toggleBot(${b.id})">${b.enabled?'⏸ Turn OFF':'▶ Turn ON'}</button>
+        <button class="danger" onclick="resetBot(${b.id})">Reset wallet</button>
+      </div>
+    </div>
+    <div class="muted" style="margin-top:8px">Trades: ${b.strategy_summary}</div>
   </div>
 
-  <div class="panel overflow">
-    <h2>Open positions</h2>
-    <table id="positions-table"><thead><tr>
-      <th>Symbol</th><th class="right">Qty</th><th class="right">Avg entry</th>
-      <th class="right">Price</th><th class="right">Value</th><th class="right">Unrealized P/L</th>
-    </tr></thead><tbody></tbody></table>
+  <div class="panel"><h2>Equity curve</h2><canvas id="equityChart" style="max-height:260px"></canvas></div>
+
+  <div class="panel">
+    <h2>How this bot trades (plain English)</h2>
+    <div id="strat-banner"></div>
+    <textarea id="strat-text" placeholder="e.g. Buy when RSI drops below 30, sell when it goes above 70. Use 40% of cash.">${b.strategy_text||""}</textarea>
+    <div class="row" style="margin-top:10px">
+      <button class="primary" onclick="saveStrategy(${b.id})">Translate &amp; save strategy</button>
+      <span class="muted">The AI turns your words into trading rules${d.bot ? '' : ''}.</span>
+    </div>
   </div>
 
-  <div class="panel overflow">
-    <h2>Recent signals</h2>
-    <table id="signals-table"><thead><tr>
-      <th>Time (UTC)</th><th>Symbol</th><th>Signal</th><th class="right">Price</th><th>Reason</th>
-    </tr></thead><tbody></tbody></table>
+  <div class="panel">
+    <h2>Controls</h2>
+    <div class="formgrid">
+      <div><label>Name</label><input id="f-name" value="${b.name}"></div>
+      <div><label>Symbol</label><input id="f-symbol" value="${b.symbol}"></div>
+      <div><label>Starting cash (USD)</label><input id="f-cash" type="number" value="${b.starting_cash}"></div>
+      <div><label>Biggest trade (USD)</label><input id="f-max" type="number" value="${b.max_trade_usd}"></div>
+      <div><label>Stop loss (%)</label><input id="f-stop" type="number" step="0.1" value="${(b.stop_loss_pct*100).toFixed(1)}"></div>
+      <div><label>Take profit (%)</label><input id="f-tp" type="number" step="0.1" value="${(b.take_profit_pct*100).toFixed(1)}"></div>
+      <div><label>Run until (blank = forever)</label><input id="f-until" type="datetime-local" value="${runUntilVal}"></div>
+      <div><label>Auto-learn from mistakes</label><select id="f-auto"><option value="1" ${b.auto_adjust?'selected':''}>On</option><option value="0" ${!b.auto_adjust?'selected':''}>Off</option></select></div>
+    </div>
+    <button class="primary" onclick="saveConfig(${b.id})">Save controls</button>
+    <span id="cfg-msg" class="muted"></span>
   </div>
 
-  <div class="panel overflow">
-    <h2>Recent trades</h2>
-    <table id="trades-table"><thead><tr>
-      <th>Time (UTC)</th><th>Symbol</th><th>Side</th><th class="right">Notional</th>
-      <th class="right">Qty</th><th class="right">Price</th><th>Status</th>
-    </tr></thead><tbody></tbody></table>
+  <div class="panel overflow"><h2>Recent trades</h2>
+    <table><thead><tr><th>Time</th><th>Side</th><th class="right">Qty</th><th class="right">Price</th><th class="right">Notional</th><th class="right">P/L</th><th>Reason</th></tr></thead>
+    <tbody>${(d.trades||[]).map(t=>`<tr><td>${fmtTime(t.ts)}</td><td><span class="tag ${t.side}">${t.side}</span></td>
+      <td class="right">${t.qty?Number(t.qty).toFixed(6):'-'}</td><td class="right">${fmtUsd(t.price)}</td>
+      <td class="right">${t.notional?fmtUsd(t.notional):'-'}</td>
+      <td class="right ${((t.pnl||0)>=0)?'pos':'neg'}">${t.pnl!=null?fmtUsd(t.pnl):'-'}</td>
+      <td class="muted">${t.reason||''}</td></tr>`).join("")||`<tr><td colspan="7" class="muted">No trades yet.</td></tr>`}</tbody></table>
   </div>
 
-  <script>
-    const fmtUsd = n => (n === null || n === undefined) ? "-" :
-      "$" + Number(n).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
-    const fmtTime = iso => { try { return new Date(iso).toISOString().replace("T", " ").slice(0, 19); } catch { return iso || "-"; } };
-    const el = id => document.getElementById(id);
+  <div class="panel overflow"><h2>AI learning log</h2>
+    <table><thead><tr><th>Time</th><th>Source</th><th>Summary</th><th>Applied changes</th></tr></thead>
+    <tbody>${(d.reviews||[]).map(r=>`<tr><td>${fmtTime(r.ts)}</td><td><span class="pill ${r.source==='ai'?'ai':''}">${r.source}</span></td>
+      <td>${r.summary||''}</td><td class="muted">${r.changes||''}</td></tr>`).join("")||`<tr><td colspan="4" class="muted">No reviews yet — they run after several closed trades.</td></tr>`}</tbody></table>
+  </div>
 
-    let chart;
-    function renderChart(curve) {
-      const labels = curve.map(p => fmtTime(p.ts).slice(5, 16));
-      const data = curve.map(p => p.equity);
-      if (!chart) {
-        chart = new Chart(el("equityChart"), {
-          type: "line",
-          data: { labels, datasets: [{
-            label: "Equity", data, borderColor: "#58a6ff",
-            backgroundColor: "rgba(88,166,255,0.12)", fill: true,
-            tension: 0.25, pointRadius: 0, borderWidth: 2,
-          }]},
-          options: {
-            responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: {
-              x: { ticks: { color: "#8b949e", maxTicksLimit: 8 }, grid: { color: "#21262d" } },
-              y: { ticks: { color: "#8b949e" }, grid: { color: "#21262d" } },
-            },
-          },
-        });
-      } else {
-        chart.data.labels = labels;
-        chart.data.datasets[0].data = data;
-        chart.update("none");
-      }
-    }
+  <div class="panel overflow"><h2>Recent signals</h2>
+    <table><thead><tr><th>Time</th><th>Signal</th><th class="right">Price</th><th>Reason</th></tr></thead>
+    <tbody>${(d.signals||[]).map(s=>`<tr><td>${fmtTime(s.ts)}</td><td><span class="tag ${s.signal}">${s.signal}</span></td>
+      <td class="right">${fmtUsd(s.price)}</td><td class="muted">${s.detail||''}</td></tr>`).join("")||`<tr><td colspan="4" class="muted">No signals yet.</td></tr>`}</tbody></table>
+  </div>`;
+}
 
-    function statCards(d) {
-      const acct = d.account || {};
-      const cfg = d.config || {};
-      const bs = d.bot_status || {};
-      const modeBadge = cfg.paper
-        ? '<span class="badge paper">PAPER</span>'
-        : '<span class="badge live">LIVE</span>';
-      const dryBadge = cfg.dry_run ? ' <span class="badge dry">DRY RUN</span>' : '';
-      const state = bs.bot_state || "unknown";
-      const cards = [
-        ["Equity", fmtUsd(acct.equity)],
-        ["Cash", fmtUsd(acct.cash)],
-        ["Buying power", fmtUsd(acct.buying_power)],
-        ["Trading", modeBadge + dryBadge],
-        ["Bot state", `<span class="${state === 'running' ? 'pos' : 'neg'}">${state}</span>`],
-        ["Symbol", `<span class="tag">${cfg.symbol || '-'}</span>`],
-        ["Last signal", `<span class="tag ${bs.last_signal || 'HOLD'}">${bs.last_signal || '-'}</span>`],
-        ["Last cycle", `<span class="muted" style="font-size:14px">${bs.last_cycle ? fmtTime(bs.last_cycle) : '-'}</span>`],
-      ];
-      el("stat-cards").innerHTML = cards.map(([label, val]) =>
-        `<div class="card"><div class="label">${label}</div><div class="value">${val}</div></div>`).join("");
-    }
+function renderChart(curve){
+  const ctx=el("equityChart"); if(!ctx)return;
+  const labels=curve.map(p=>fmtTime(p.ts).slice(5)); const data=curve.map(p=>p.equity);
+  if(chart){chart.destroy();}
+  chart=new Chart(ctx,{type:"line",data:{labels,datasets:[{data,borderColor:"#58a6ff",
+    backgroundColor:"rgba(88,166,255,0.12)",fill:true,tension:.25,pointRadius:0,borderWidth:2}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+    scales:{x:{ticks:{color:"#8b949e",maxTicksLimit:8},grid:{color:"#21262d"}},
+            y:{ticks:{color:"#8b949e"},grid:{color:"#21262d"}}}}});
+}
 
-    function fillPositions(rows) {
-      const body = el("positions-table").querySelector("tbody");
-      if (!rows.length) { body.innerHTML = `<tr><td colspan="6" class="muted">No open positions.</td></tr>`; return; }
-      body.innerHTML = rows.map(p => {
-        const cls = p.unrealized_pl >= 0 ? "pos" : "neg";
-        return `<tr>
-          <td><span class="tag">${p.symbol}</span></td>
-          <td class="right">${Number(p.qty).toFixed(6)}</td>
-          <td class="right">${fmtUsd(p.avg_entry_price)}</td>
-          <td class="right">${fmtUsd(p.current_price)}</td>
-          <td class="right">${fmtUsd(p.market_value)}</td>
-          <td class="right ${cls}">${fmtUsd(p.unrealized_pl)} (${p.unrealized_plpc.toFixed(2)}%)</td>
-        </tr>`;
-      }).join("");
-    }
+async function selectBot(id){currentBotId=id; renderTabs(); await loadDetail();}
 
-    function fillSignals(rows) {
-      const body = el("signals-table").querySelector("tbody");
-      if (!rows.length) { body.innerHTML = `<tr><td colspan="5" class="muted">No signals yet.</td></tr>`; return; }
-      body.innerHTML = rows.map(s => `<tr>
-        <td>${fmtTime(s.ts)}</td>
-        <td><span class="tag">${s.symbol}</span></td>
-        <td><span class="tag ${s.signal}">${s.signal}</span></td>
-        <td class="right">${s.price ? fmtUsd(s.price) : '-'}</td>
-        <td class="muted">${s.detail || ''}</td>
-      </tr>`).join("");
-    }
+async function loadDetail(){
+  if(currentBotId==null)return;
+  try{const d=await api(`/api/bots/${currentBotId}`);
+    el("detail").innerHTML=detailHTML(d); renderChart(d.equity_curve||[]);
+  }catch(e){el("detail").innerHTML=`<div class="banner warn">Could not load bot: ${e.message}</div>`;}
+}
 
-    function fillTrades(rows) {
-      const body = el("trades-table").querySelector("tbody");
-      if (!rows.length) { body.innerHTML = `<tr><td colspan="7" class="muted">No trades yet.</td></tr>`; return; }
-      body.innerHTML = rows.map(t => `<tr>
-        <td>${fmtTime(t.ts)}</td>
-        <td><span class="tag">${t.symbol}</span></td>
-        <td><span class="tag ${t.side}">${t.side}</span></td>
-        <td class="right">${t.notional ? fmtUsd(t.notional) : '-'}</td>
-        <td class="right">${t.qty ? Number(t.qty).toFixed(6) : '-'}</td>
-        <td class="right">${t.price ? fmtUsd(t.price) : '-'}</td>
-        <td class="muted">${t.status || ''}</td>
-      </tr>`).join("");
-    }
+async function loadBots(){
+  const d=await api("/api/bots"); bots=d.bots;
+  el("ai-state").textContent = d.ai_enabled ? `on (${d.model})` : "off — using rule-based parser";
+  if(currentBotId==null && bots.length) currentBotId=bots[0].id;
+  renderTabs();
+}
 
-    async function refresh() {
-      try {
-        const res = await fetch("/api/status", { cache: "no-store" });
-        const d = await res.json();
-        el("error-box").innerHTML = d.error ? `<div class="err">${d.error}</div>` : "";
-        statCards(d);
-        renderChart(d.equity_curve || []);
-        fillPositions(d.positions || []);
-        fillSignals(d.signals || []);
-        fillTrades(d.trades || []);
-        el("updated").textContent = new Date().toLocaleTimeString();
-      } catch (e) {
-        el("error-box").innerHTML = `<div class="err">Could not reach the dashboard API: ${e}</div>`;
-      }
-    }
+async function toggleBot(id){await api(`/api/bots/${id}/toggle`,{method:"POST"}); await loadBots(); await loadDetail();}
+async function resetBot(id){if(!confirm("Reset this bot's wallet and clear its history?"))return;
+  await api(`/api/bots/${id}/reset`,{method:"POST"}); await loadBots(); await loadDetail();}
 
-    refresh();
-    setInterval(refresh, 10000);
-  </script>
+async function saveStrategy(id){
+  const text=el("strat-text").value.trim(); if(!text)return;
+  el("strat-banner").innerHTML=`<div class="banner">Translating…</div>`;
+  try{const r=await api(`/api/bots/${id}/strategy`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})});
+    el("strat-banner").innerHTML=`<div class="banner ok"><b>Saved (${r.source}).</b> ${r.summary}</div>`;
+    await loadBots();
+  }catch(e){el("strat-banner").innerHTML=`<div class="banner warn">Failed: ${e.message}</div>`;}
+}
+
+async function saveConfig(id){
+  const until=el("f-until").value;
+  const body={name:el("f-name").value,symbol:el("f-symbol").value,
+    starting_cash:parseFloat(el("f-cash").value),max_trade_usd:parseFloat(el("f-max").value),
+    stop_loss_pct:parseFloat(el("f-stop").value),take_profit_pct:parseFloat(el("f-tp").value),
+    run_until:until?new Date(until).toISOString():"",auto_adjust:el("f-auto").value==="1"};
+  el("cfg-msg").textContent="Saving…";
+  try{await api(`/api/bots/${id}/config`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    el("cfg-msg").textContent="Saved ✓"; await loadBots(); await loadDetail();
+  }catch(e){el("cfg-msg").textContent="Failed: "+e.message;}
+}
+
+async function tick(){try{await loadBots();
+  // only auto-refresh detail if the user isn't typing in a field
+  if(document.activeElement && ["INPUT","TEXTAREA","SELECT"].includes(document.activeElement.tagName)) return;
+  await loadDetail(); el("updated").textContent=new Date().toLocaleTimeString();
+}catch(e){el("detail").innerHTML=`<div class="banner warn">Dashboard error: ${e.message}</div>`;}}
+
+(async()=>{await loadBots(); await loadDetail(); el("updated").textContent=new Date().toLocaleTimeString();
+  setInterval(tick,10000);})();
+</script>
 </body>
 </html>
