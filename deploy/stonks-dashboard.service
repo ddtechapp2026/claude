@@ -1,0 +1,22 @@
+# systemd unit for the dashboard (uvicorn/FastAPI).
+# Install:  sudo cp deploy/stonks-dashboard.service /etc/systemd/system/
+# Then:     sudo systemctl daemon-reload && sudo systemctl enable --now stonks-dashboard
+#
+# Binds to 127.0.0.1 only - nginx (see nginx-stonks.conf) is what exposes it
+# to the network, with a password. Do not change this to 0.0.0.0 unless you
+# know you want the dashboard reachable without the nginx login.
+[Unit]
+Description=Stonks dashboard (FastAPI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Stonks
+ExecStart=/home/ubuntu/Stonks/.venv/bin/uvicorn src.dashboard.app:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

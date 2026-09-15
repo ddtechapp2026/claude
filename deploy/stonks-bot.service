@@ -1,0 +1,24 @@
+# systemd unit for the trading bot.
+# Install:  sudo cp deploy/stonks-bot.service /etc/systemd/system/
+# Then:     sudo systemctl daemon-reload && sudo systemctl enable --now stonks-bot
+#
+# Adjust User and paths if you did not follow docs/ORACLE_SETUP.md exactly.
+[Unit]
+Description=Stonks crypto trading bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Stonks
+# Use the virtualenv's python so dependencies are found.
+ExecStart=/home/ubuntu/Stonks/.venv/bin/python -m src.bot
+Restart=always
+RestartSec=10
+# Restart if it dies, but back off if it is crash-looping.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target

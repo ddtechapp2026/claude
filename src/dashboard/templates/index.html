@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stonks Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d1117; --panel: #161b22; --border: #30363d;
+      --text: #e6edf3; --muted: #8b949e; --green: #3fb950; --red: #f85149;
+      --accent: #58a6ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      padding: 16px;
+    }
+    header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+    h1 { font-size: 20px; margin: 0; }
+    h1 span { color: var(--accent); }
+    .muted { color: var(--muted); font-size: 13px; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+    .badge.paper { background: #1f6feb33; color: var(--accent); }
+    .badge.live { background: #f8514933; color: var(--red); }
+    .badge.dry { background: #d2992222; color: #d29922; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+    .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    .card .value { font-size: 24px; font-weight: 600; margin-top: 6px; }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 16px; }
+    .panel h2 { font-size: 14px; margin: 0 0 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    th { color: var(--muted); font-weight: 600; }
+    .pos { color: var(--green); } .neg { color: var(--red); }
+    .right { text-align: right; }
+    .err { background: #f8514922; border: 1px solid var(--red); color: #ffb4ae; padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; }
+    .tag { font-family: ui-monospace, monospace; font-size: 12px; padding: 1px 6px; border-radius: 4px; background: #30363d; }
+    .tag.BUY { background: #3fb95033; color: var(--green); }
+    .tag.SELL { background: #f8514933; color: var(--red); }
+    .tag.HOLD { background: #30363d; color: var(--muted); }
+    .overflow { overflow-x: auto; }
+    canvas { max-height: 280px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1><span>Stonks</span> &middot; crypto paper-trading dashboard</h1>
+    <div class="muted">Updated <span id="updated">-</span> &middot; auto-refresh 10s</div>
+  </header>
+
+  <div id="error-box"></div>
+
+  <div class="grid" id="stat-cards"></div>
+
+  <div class="panel">
+    <h2>Equity curve</h2>
+    <canvas id="equityChart"></canvas>
+  </div>
+
+  <div class="panel overflow">
+    <h2>Open positions</h2>
+    <table id="positions-table"><thead><tr>
+      <th>Symbol</th><th class="right">Qty</th><th class="right">Avg entry</th>
+      <th class="right">Price</th><th class="right">Value</th><th class="right">Unrealized P/L</th>
+    </tr></thead><tbody></tbody></table>
+  </div>
+
+  <div class="panel overflow">
+    <h2>Recent signals</h2>
+    <table id="signals-table"><thead><tr>
+      <th>Time (UTC)</th><th>Symbol</th><th>Signal</th><th class="right">Price</th><th>Reason</th>
+    </tr></thead><tbody></tbody></table>
+  </div>
+
+  <div class="panel overflow">
+    <h2>Recent trades</h2>
+    <table id="trades-table"><thead><tr>
+      <th>Time (UTC)</th><th>Symbol</th><th>Side</th><th class="right">Notional</th>
+      <th class="right">Qty</th><th class="right">Price</th><th>Status</th>
+    </tr></thead><tbody></tbody></table>
+  </div>
+
+  <script>
+    const fmtUsd = n => (n === null || n === undefined) ? "-" :
+      "$" + Number(n).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    const fmtTime = iso => { try { return new Date(iso).toISOString().replace("T", " ").slice(0, 19); } catch { return iso || "-"; } };
+    const el = id => document.getElementById(id);
+
+    let chart;
+    function renderChart(curve) {
+      const labels = curve.map(p => fmtTime(p.ts).slice(5, 16));
+      const data = curve.map(p => p.equity);
+      if (!chart) {
+        chart = new Chart(el("equityChart"), {
+          type: "line",
+          data: { labels, datasets: [{
+            label: "Equity", data, borderColor: "#58a6ff",
+            backgroundColor: "rgba(88,166,255,0.12)", fill: true,
+            tension: 0.25, pointRadius: 0, borderWidth: 2,
+          }]},
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { ticks: { color: "#8b949e", maxTicksLimit: 8 }, grid: { color: "#21262d" } },
+              y: { ticks: { color: "#8b949e" }, grid: { color: "#21262d" } },
+            },
+          },
+        });
+      } else {
+        chart.data.labels = labels;
+        chart.data.datasets[0].data = data;
+        chart.update("none");
+      }
+    }
+
+    function statCards(d) {
+      const acct = d.account || {};
+      const cfg = d.config || {};
+      const bs = d.bot_status || {};
+      const modeBadge = cfg.paper
+        ? '<span class="badge paper">PAPER</span>'
+        : '<span class="badge live">LIVE</span>';
+      const dryBadge = cfg.dry_run ? ' <span class="badge dry">DRY RUN</span>' : '';
+      const state = bs.bot_state || "unknown";
+      const cards = [
+        ["Equity", fmtUsd(acct.equity)],
+        ["Cash", fmtUsd(acct.cash)],
+        ["Buying power", fmtUsd(acct.buying_power)],
+        ["Trading", modeBadge + dryBadge],
+        ["Bot state", `<span class="${state === 'running' ? 'pos' : 'neg'}">${state}</span>`],
+        ["Symbol", `<span class="tag">${cfg.symbol || '-'}</span>`],
+        ["Last signal", `<span class="tag ${bs.last_signal || 'HOLD'}">${bs.last_signal || '-'}</span>`],
+        ["Last cycle", `<span class="muted" style="font-size:14px">${bs.last_cycle ? fmtTime(bs.last_cycle) : '-'}</span>`],
+      ];
+      el("stat-cards").innerHTML = cards.map(([label, val]) =>
+        `<div class="card"><div class="label">${label}</div><div class="value">${val}</div></div>`).join("");
+    }
+
+    function fillPositions(rows) {
+      const body = el("positions-table").querySelector("tbody");
+      if (!rows.length) { body.innerHTML = `<tr><td colspan="6" class="muted">No open positions.</td></tr>`; return; }
+      body.innerHTML = rows.map(p => {
+        const cls = p.unrealized_pl >= 0 ? "pos" : "neg";
+        return `<tr>
+          <td><span class="tag">${p.symbol}</span></td>
+          <td class="right">${Number(p.qty).toFixed(6)}</td>
+          <td class="right">${fmtUsd(p.avg_entry_price)}</td>
+          <td class="right">${fmtUsd(p.current_price)}</td>
+          <td class="right">${fmtUsd(p.market_value)}</td>
+          <td class="right ${cls}">${fmtUsd(p.unrealized_pl)} (${p.unrealized_plpc.toFixed(2)}%)</td>
+        </tr>`;
+      }).join("");
+    }
+
+    function fillSignals(rows) {
+      const body = el("signals-table").querySelector("tbody");
+      if (!rows.length) { body.innerHTML = `<tr><td colspan="5" class="muted">No signals yet.</td></tr>`; return; }
+      body.innerHTML = rows.map(s => `<tr>
+        <td>${fmtTime(s.ts)}</td>
+        <td><span class="tag">${s.symbol}</span></td>
+        <td><span class="tag ${s.signal}">${s.signal}</span></td>
+        <td class="right">${s.price ? fmtUsd(s.price) : '-'}</td>
+        <td class="muted">${s.detail || ''}</td>
+      </tr>`).join("");
+    }
+
+    function fillTrades(rows) {
+      const body = el("trades-table").querySelector("tbody");
+      if (!rows.length) { body.innerHTML = `<tr><td colspan="7" class="muted">No trades yet.</td></tr>`; return; }
+      body.innerHTML = rows.map(t => `<tr>
+        <td>${fmtTime(t.ts)}</td>
+        <td><span class="tag">${t.symbol}</span></td>
+        <td><span class="tag ${t.side}">${t.side}</span></td>
+        <td class="right">${t.notional ? fmtUsd(t.notional) : '-'}</td>
+        <td class="right">${t.qty ? Number(t.qty).toFixed(6) : '-'}</td>
+        <td class="right">${t.price ? fmtUsd(t.price) : '-'}</td>
+        <td class="muted">${t.status || ''}</td>
+      </tr>`).join("");
+    }
+
+    async function refresh() {
+      try {
+        const res = await fetch("/api/status", { cache: "no-store" });
+        const d = await res.json();
+        el("error-box").innerHTML = d.error ? `<div class="err">${d.error}</div>` : "";
+        statCards(d);
+        renderChart(d.equity_curve || []);
+        fillPositions(d.positions || []);
+        fillSignals(d.signals || []);
+        fillTrades(d.trades || []);
+        el("updated").textContent = new Date().toLocaleTimeString();
+      } catch (e) {
+        el("error-box").innerHTML = `<div class="err">Could not reach the dashboard API: ${e}</div>`;
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 10000);
+  </script>
+</body>
+</html>
