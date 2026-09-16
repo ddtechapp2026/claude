@@ -7,6 +7,9 @@
 Description=Stonks crypto trading bot
 After=network-online.target
 Wants=network-online.target
+# Crash-loop backoff lives in [Unit] on this systemd version.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -16,9 +19,6 @@ WorkingDirectory=/home/ubuntu/Stonks
 ExecStart=/home/ubuntu/Stonks/.venv/bin/python -m src.engine
 Restart=always
 RestartSec=10
-# Restart if it dies, but back off if it is crash-looping.
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 [Install]
 WantedBy=multi-user.target

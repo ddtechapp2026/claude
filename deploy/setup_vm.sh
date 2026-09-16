@@ -47,7 +47,10 @@ for unit in stonks-bot stonks-dashboard; do
       "deploy/${unit}.service" | sudo tee "/etc/systemd/system/${unit}.service" >/dev/null
 done
 sudo systemctl daemon-reload
-sudo systemctl enable --now stonks-bot stonks-dashboard
+sudo systemctl enable stonks-bot stonks-dashboard
+# Use restart (not just "enable --now") so re-running this script after a code
+# update actually reloads the new code into already-running services.
+sudo systemctl restart stonks-bot stonks-dashboard
 
 echo "==> Configuring nginx reverse proxy..."
 sudo cp deploy/nginx-stonks.conf /etc/nginx/sites-available/stonks
