@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -71,15 +72,17 @@ def api_bot(bot_id: int) -> JSONResponse:
     })
 
 
+# NOTE: Pydantic evaluates these annotations at runtime, so use typing.Optional
+# rather than the `X | None` syntax (which needs Python 3.10+; the VM runs 3.8).
 class ConfigIn(BaseModel):
-    name: str | None = None
-    symbol: str | None = None
-    starting_cash: float | None = None
-    max_trade_usd: float | None = None
-    stop_loss_pct: float | None = None       # accepts percent (5) or fraction (0.05)
-    take_profit_pct: float | None = None
-    run_until: str | None = None             # ISO ts, "" clears it
-    auto_adjust: bool | None = None
+    name: Optional[str] = None
+    symbol: Optional[str] = None
+    starting_cash: Optional[float] = None
+    max_trade_usd: Optional[float] = None
+    stop_loss_pct: Optional[float] = None      # accepts percent (5) or fraction (0.05)
+    take_profit_pct: Optional[float] = None
+    run_until: Optional[str] = None            # ISO ts, "" clears it
+    auto_adjust: Optional[bool] = None
 
 
 def _norm_pct(v: float | None) -> float | None:
