@@ -71,7 +71,13 @@ const fmtUsd=n=>(n==null)?"-":"$"+Number(n).toLocaleString(undefined,{minimumFra
 const fmtTime=iso=>{try{return new Date(iso).toISOString().replace("T"," ").slice(0,16)}catch{return iso||"-"}};
 const el=id=>document.getElementById(id);
 const pct=n=>(n==null)?"-":(Number(n)*100).toFixed(1)+"%";
-let currentBotId=null, chart=null, bots=[];
+let currentBotId=null, chart=null, bots=[], universe=[];
+
+function symbolOptions(sel){
+  const opts = ['AUTO', ...universe];
+  if(sel && !opts.includes(sel)) opts.push(sel);   // keep a custom value visible
+  return opts.map(s=>`<option value="${s}" ${s===sel?'selected':''}>${s==='AUTO'?'Auto — pick any crypto':s}</option>`).join("");
+}
 
 async function api(url,opts){const r=await fetch(url,{cache:"no-store",...opts});
   if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||r.statusText);return r.json();}
@@ -82,7 +88,7 @@ function renderTabs(){
     const pnlCls = b.pnl>=0?"pos":"neg";
     return `<div class="${cls}" onclick="selectBot(${b.id})">
       <div class="name"><span class="dot ${b.enabled?'on':'off'}"></span>${b.name}</div>
-      <div class="sub"><span class="${pnlCls}">${fmtUsd(b.equity)} (${b.pnl>=0?'+':''}${b.pnl_pct.toFixed(1)}%)</span></div>
+      <div class="sub"><span class="muted">${b.symbol}</span> · <span class="${pnlCls}">${fmtUsd(b.equity)} (${b.pnl>=0?'+':''}${b.pnl_pct.toFixed(1)}%)</span></div>
     </div>`;}).join("");
 }
 
@@ -95,7 +101,7 @@ function detailHTML(d){
     <div class="card"><div class="label">Equity</div><div class="value">${fmtUsd(b.equity)}</div></div>
     <div class="card"><div class="label">Total P/L</div><div class="value ${b.pnl>=0?'pos':'neg'}">${fmtUsd(b.pnl)} (${b.pnl>=0?'+':''}${b.pnl_pct.toFixed(1)}%)</div></div>
     <div class="card"><div class="label">Cash</div><div class="value">${fmtUsd(w.cash)}</div></div>
-    <div class="card"><div class="label">Position</div><div class="value">${held?Number(w.position_qty).toFixed(6):'flat'}</div></div>
+    <div class="card"><div class="label">Position</div><div class="value">${held?Number(w.position_qty).toFixed(6)+' <span class="tag">'+(w.position_symbol||'')+'</span>':'flat'}</div></div>
     <div class="card"><div class="label">Realized P/L</div><div class="value ${(w.realized_pnl||0)>=0?'pos':'neg'}">${fmtUsd(w.realized_pnl)}</div></div>
     <div class="card"><div class="label">State</div><div class="value" style="font-size:15px">${b.enabled?'<span class="pos">running</span>':'<span class="muted">off</span>'} · <span class="muted">${b.status||''}</span></div></div>
   </div>
@@ -105,6 +111,7 @@ function detailHTML(d){
       <div><b>${b.name}</b> <span class="pill">${b.symbol}</span> ${b.auto_adjust?'<span class="pill ai">auto-learn on</span>':''}</div>
       <div class="row">
         <button class="${b.enabled?'on':'off'}" onclick="toggleBot(${b.id})">${b.enabled?'⏸ Turn OFF':'▶ Turn ON'}</button>
+        <a href="/api/bots/${b.id}/export" download style="text-decoration:none"><button>⬇ Export data</button></a>
         <button class="danger" onclick="resetBot(${b.id})">Reset wallet</button>
       </div>
     </div>
@@ -127,7 +134,7 @@ function detailHTML(d){
     <h2>Controls</h2>
     <div class="formgrid">
       <div><label>Name</label><input id="f-name" value="${b.name}"></div>
-      <div><label>Symbol</label><input id="f-symbol" value="${b.symbol}"></div>
+      <div><label>Crypto (or Auto = pick any)</label><select id="f-symbol">${symbolOptions(b.symbol)}</select></div>
       <div><label>Starting cash (USD)</label><input id="f-cash" type="number" value="${b.starting_cash}"></div>
       <div><label>Biggest trade (USD)</label><input id="f-max" type="number" value="${b.max_trade_usd}"></div>
       <div><label>Stop loss (%)</label><input id="f-stop" type="number" step="0.1" value="${(b.stop_loss_pct*100).toFixed(1)}"></div>
@@ -140,12 +147,12 @@ function detailHTML(d){
   </div>
 
   <div class="panel overflow"><h2>Recent trades</h2>
-    <table><thead><tr><th>Time</th><th>Side</th><th class="right">Qty</th><th class="right">Price</th><th class="right">Notional</th><th class="right">P/L</th><th>Reason</th></tr></thead>
-    <tbody>${(d.trades||[]).map(t=>`<tr><td>${fmtTime(t.ts)}</td><td><span class="tag ${t.side}">${t.side}</span></td>
+    <table><thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th class="right">Qty</th><th class="right">Price</th><th class="right">Notional</th><th class="right">P/L</th><th>Reason</th></tr></thead>
+    <tbody>${(d.trades||[]).map(t=>`<tr><td>${fmtTime(t.ts)}</td><td><span class="tag">${t.symbol||'-'}</span></td><td><span class="tag ${t.side}">${t.side}</span></td>
       <td class="right">${t.qty?Number(t.qty).toFixed(6):'-'}</td><td class="right">${fmtUsd(t.price)}</td>
       <td class="right">${t.notional?fmtUsd(t.notional):'-'}</td>
       <td class="right ${((t.pnl||0)>=0)?'pos':'neg'}">${t.pnl!=null?fmtUsd(t.pnl):'-'}</td>
-      <td class="muted">${t.reason||''}</td></tr>`).join("")||`<tr><td colspan="7" class="muted">No trades yet.</td></tr>`}</tbody></table>
+      <td class="muted">${t.reason||''}</td></tr>`).join("")||`<tr><td colspan="8" class="muted">No trades yet.</td></tr>`}</tbody></table>
   </div>
 
   <div class="panel overflow"><h2>AI learning log</h2>
@@ -154,10 +161,11 @@ function detailHTML(d){
       <td>${r.summary||''}</td><td class="muted">${r.changes||''}</td></tr>`).join("")||`<tr><td colspan="4" class="muted">No reviews yet — they run after several closed trades.</td></tr>`}</tbody></table>
   </div>
 
-  <div class="panel overflow"><h2>Recent signals</h2>
-    <table><thead><tr><th>Time</th><th>Signal</th><th class="right">Price</th><th>Reason</th></tr></thead>
-    <tbody>${(d.signals||[]).map(s=>`<tr><td>${fmtTime(s.ts)}</td><td><span class="tag ${s.signal}">${s.signal}</span></td>
-      <td class="right">${fmtUsd(s.price)}</td><td class="muted">${s.detail||''}</td></tr>`).join("")||`<tr><td colspan="4" class="muted">No signals yet.</td></tr>`}</tbody></table>
+  <div class="panel overflow"><h2>Decision journal <span class="muted" style="text-transform:none">(every move + reasoning; hover a row for indicators)</span></h2>
+    <table><thead><tr><th>Time</th><th>Symbol</th><th>Signal</th><th class="right">Price</th><th>Reasoning</th></tr></thead>
+    <tbody>${(d.signals||[]).map(s=>`<tr title="${s.context?String(s.context).replace(/"/g,'&quot;'):''}"><td>${fmtTime(s.ts)}</td>
+      <td><span class="tag">${s.symbol||'-'}</span></td><td><span class="tag ${s.signal}">${s.signal}</span></td>
+      <td class="right">${fmtUsd(s.price)}</td><td class="muted">${s.detail||''}</td></tr>`).join("")||`<tr><td colspan="5" class="muted">No decisions yet.</td></tr>`}</tbody></table>
   </div>`;
 }
 
@@ -182,7 +190,7 @@ async function loadDetail(){
 }
 
 async function loadBots(){
-  const d=await api("/api/bots"); bots=d.bots;
+  const d=await api("/api/bots"); bots=d.bots; universe=d.universe||[];
   el("ai-state").textContent = d.ai_enabled ? `on (${d.model})` : "off — using rule-based parser";
   if(currentBotId==null && bots.length) currentBotId=bots[0].id;
   renderTabs();

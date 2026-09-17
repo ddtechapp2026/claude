@@ -9,6 +9,7 @@ via OpenRouter, with a rule-based fallback). Sits behind nginx Basic Auth.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -55,7 +56,25 @@ def healthz() -> dict:
 def api_bots() -> JSONResponse:
     bots = [_bot_view(b) for b in _db.list_bots()]
     return JSONResponse({"bots": bots, "ai_enabled": settings.ai_enabled,
-                         "model": settings.openrouter_model})
+                         "model": settings.openrouter_model,
+                         "universe": list(settings.crypto_universe)})
+
+
+@app.get("/api/bots/{bot_id}/export")
+def api_export(bot_id: int) -> JSONResponse:
+    """Full decision journal + trades for a bot — the learning dataset."""
+    bot = _db.get_bot(bot_id)
+    if not bot:
+        raise HTTPException(404, "bot not found")
+    payload = {
+        "bot": {k: bot[k] for k in ("id", "name", "symbol", "strategy_text", "strategy_spec")},
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "trades": _db.all_trades(bot_id),
+        "decisions": _db.all_signals(bot_id),
+        "reviews": _db.recent_reviews(bot_id, 1000),
+    }
+    fname = f"bot{bot_id}_{bot['name'].replace(' ', '_')}_data.json"
+    return JSONResponse(payload, headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
 @app.get("/api/bots/{bot_id}")

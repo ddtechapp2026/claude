@@ -60,11 +60,15 @@ _BOTS = [
 def seed_if_empty(db: Database) -> int:
     if db.count_bots() > 0:
         return 0
-    for name, text, spec, stop, tp, max_trade in _BOTS:
+    universe = list(settings.crypto_universe) or [settings.default_symbol]
+    for i, (name, text, spec, stop, tp, max_trade) in enumerate(_BOTS):
+        # Spread the starter bots across different cryptos, and let the last two
+        # run in "AUTO" mode (they scan the whole universe and pick what fires).
+        symbol = "AUTO" if i >= len(_BOTS) - 2 else universe[i % len(universe)]
         db.create_bot(
             name=name,
             enabled=0,  # start OFF; you turn them on from the dashboard
-            symbol=settings.default_symbol,
+            symbol=symbol,
             strategy_text=text,
             strategy_spec=json.dumps(validate_spec(spec)),
             starting_cash=10000.0,

@@ -32,6 +32,7 @@ class Settings:
     bar_timeframe: str
     lookback_hours: int
     default_symbol: str
+    crypto_universe: tuple  # symbols an "Auto" bot may scan / pick from
 
     # Storage
     database_path: Path
@@ -66,6 +67,12 @@ def load_settings() -> Settings:
         bar_timeframe=os.getenv("BAR_TIMEFRAME", "15Min").strip(),
         lookback_hours=int(os.getenv("LOOKBACK_HOURS", "72")),
         default_symbol=os.getenv("TRADE_SYMBOL", "BTC/USD").strip(),
+        crypto_universe=tuple(
+            s.strip() for s in os.getenv(
+                "CRYPTO_UNIVERSE",
+                "BTC/USD,ETH/USD,SOL/USD,LTC/USD,DOGE/USD,AVAX/USD,LINK/USD,BCH/USD,UNI/USD,DOT/USD",
+            ).split(",") if s.strip()
+        ),
         database_path=db_path,
         dashboard_host=os.getenv("DASHBOARD_HOST", "127.0.0.1").strip(),
         dashboard_port=int(os.getenv("DASHBOARD_PORT", "8000")),

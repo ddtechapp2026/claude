@@ -21,7 +21,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-from . import llm, market, strategy_engine
+from . import indicators, llm, market, strategy_engine
 from .config import settings
 from .database import Database
 from .seed import seed_if_empty
@@ -61,52 +61,61 @@ def _expired(run_until: str | None) -> bool:
         return False
 
 
-def _sell(db: Database, bot: dict, wallet: dict, price: float, reason: str) -> float:
+def _snapshot(closes: list[float]) -> dict:
+    """Indicator snapshot recorded with every decision, for the learning dataset."""
+    def r(v):
+        return round(v, 4) if isinstance(v, (int, float)) else v
+    return {
+        "price": r(closes[-1]) if closes else None,
+        "bars": len(closes),
+        "rsi14": r(indicators.rsi(closes, 14)),
+        "sma10": r(indicators.sma(closes, 10)),
+        "sma30": r(indicators.sma(closes, 30)),
+        "ema9": r(indicators.ema(closes, 9)),
+        "ema21": r(indicators.ema(closes, 21)),
+        "pct_change4": r(indicators.pct_change(closes, 4)),
+        "high20": r(indicators.highest(closes, 20)),
+        "low20": r(indicators.lowest(closes, 20)),
+    }
+
+
+def _candidate_symbols(bot: dict) -> list[str]:
+    """Symbols to consider when the bot is flat. 'AUTO' scans the universe."""
+    if (bot["symbol"] or "").upper() == "AUTO":
+        return list(settings.crypto_universe)
+    return [bot["symbol"]]
+
+
+def _sell(db: Database, bot: dict, wallet: dict, symbol: str, price: float, reason: str) -> float:
     qty = wallet["position_qty"]
     entry = wallet["entry_price"] or price
     proceeds = qty * price
     pnl = proceeds - qty * entry
     db.update_wallet(bot["id"], cash=wallet["cash"] + proceeds, position_qty=0.0,
-                     entry_price=None, realized_pnl=wallet["realized_pnl"] + pnl,
+                     position_symbol=None, entry_price=None,
+                     realized_pnl=wallet["realized_pnl"] + pnl,
                      equity=wallet["cash"] + proceeds)
-    db.record_trade(bot["id"], "SELL", qty, price, proceeds, pnl, reason)
-    log.info("[%s] SELL %.6f @ %.2f  pnl=%+.2f (%s)", bot["name"], qty, price, pnl, reason)
+    db.record_trade(bot["id"], symbol, "SELL", qty, price, proceeds, pnl, reason)
+    log.info("[%s] SELL %s %.6f @ %.2f  pnl=%+.2f (%s)", bot["name"], symbol, qty, price, pnl, reason)
     return pnl
 
 
-def _buy(db: Database, bot: dict, wallet: dict, price: float, size_fraction: float, reason: str) -> None:
+def _buy(db: Database, bot: dict, wallet: dict, symbol: str, price: float,
+         size_fraction: float, reason: str) -> bool:
     notional = min(bot["max_trade_usd"], wallet["cash"] * size_fraction)
     if notional < _MIN_NOTIONAL or notional > wallet["cash"]:
-        return
+        return False
     qty = notional / price
     db.update_wallet(bot["id"], cash=wallet["cash"] - notional, position_qty=qty,
-                     entry_price=price, equity=wallet["cash"])  # equity unchanged by a buy
-    db.record_trade(bot["id"], "BUY", qty, price, notional, None, reason)
-    log.info("[%s] BUY  %.6f @ %.2f  ($%.2f) (%s)", bot["name"], qty, price, notional, reason)
+                     position_symbol=symbol, entry_price=price, equity=wallet["cash"])
+    db.record_trade(bot["id"], symbol, "BUY", qty, price, notional, None, reason)
+    log.info("[%s] BUY  %s %.6f @ %.2f  ($%.2f) (%s)", bot["name"], symbol, qty, price, notional, reason)
+    return True
 
 
 def run_bot(db: Database, bot: dict) -> None:
     wallet = db.get_wallet(bot["id"])
     if wallet is None:
-        return
-
-    closes = market.get_closes(bot["symbol"])
-    price = closes[-1] if closes else None
-    if price is None:
-        db.update_bot(bot["id"], status="no data", last_cycle=None)
-        return
-
-    qty = wallet["position_qty"]
-    equity = wallet["cash"] + qty * price
-    db.update_wallet(bot["id"], equity=equity)
-    db.record_equity(bot["id"], equity)
-
-    # Run-until expiry: close any position and turn the bot off.
-    if _expired(bot["run_until"]):
-        if qty > 0:
-            _sell(db, bot, wallet, price, "run ended")
-        db.update_bot(bot["id"], enabled=0, status="finished",
-                      last_reason="run window ended", last_cycle=_now())
         return
 
     try:
@@ -115,30 +124,81 @@ def run_bot(db: Database, bot: dict) -> None:
         db.update_bot(bot["id"], status="bad strategy", last_reason=str(exc), last_cycle=_now())
         return
 
+    qty = wallet["position_qty"]
     has_position = qty > 0
-    decision = None
+    closed = False
 
     if has_position:
+        # Manage the held position (whatever symbol it's in).
+        symbol = wallet["position_symbol"] or bot["symbol"]
+        closes = market.get_closes(symbol)
+        price = closes[-1] if closes else None
+        if price is None:
+            db.update_bot(bot["id"], status="no data for %s" % symbol, last_cycle=_now())
+            return
+        equity = wallet["cash"] + qty * price
+        db.update_wallet(bot["id"], equity=equity)
+        db.record_equity(bot["id"], equity)
+
         entry = wallet["entry_price"] or price
+        if _expired(bot["run_until"]):
+            _sell(db, bot, wallet, symbol, price, "run ended")
+            db.update_bot(bot["id"], enabled=0, status="finished",
+                          last_reason="run window ended", last_cycle=_now())
+            return
         if bot["stop_loss_pct"] > 0 and price <= entry * (1 - bot["stop_loss_pct"]):
             decision = strategy_engine.Decision(strategy_engine.SELL, "stop-loss")
         elif bot["take_profit_pct"] > 0 and price >= entry * (1 + bot["take_profit_pct"]):
             decision = strategy_engine.Decision(strategy_engine.SELL, "take-profit")
         else:
             decision = strategy_engine.evaluate(spec, closes, has_position=True, entry_price=entry)
+
+        db.record_signal(bot["id"], symbol, decision.signal, price, decision.reason, _snapshot(closes))
+        if decision.signal == strategy_engine.SELL:
+            _sell(db, bot, wallet, symbol, price, decision.reason)
+            closed = True
+        db.update_bot(bot["id"], status="running", last_reason=f"{symbol}: {decision.reason}",
+                      last_cycle=_now())
     else:
-        decision = strategy_engine.evaluate(spec, closes, has_position=False)
+        # Flat: mark cash equity, then scan candidate symbols for an entry.
+        db.update_wallet(bot["id"], equity=wallet["cash"])
+        db.record_equity(bot["id"], wallet["cash"])
+        if _expired(bot["run_until"]):
+            db.update_bot(bot["id"], enabled=0, status="finished",
+                          last_reason="run window ended", last_cycle=_now())
+            return
 
-    db.record_signal(bot["id"], decision.signal, price, decision.reason)
+        chosen = None
+        scanned = {}
+        for symbol in _candidate_symbols(bot):
+            closes = market.get_closes(symbol)
+            if not closes:
+                continue
+            decision = strategy_engine.evaluate(spec, closes, has_position=False)
+            scanned[symbol] = decision.signal
+            if decision.signal == strategy_engine.BUY:
+                chosen = (symbol, closes, decision)
+                break
 
-    closed = False
-    if decision.signal == strategy_engine.SELL and has_position:
-        _sell(db, bot, wallet, price, decision.reason)
-        closed = True
-    elif decision.signal == strategy_engine.BUY and not has_position:
-        _buy(db, bot, wallet, price, spec.get("size_fraction", 1.0), decision.reason)
-
-    db.update_bot(bot["id"], status="running", last_reason=decision.reason, last_cycle=_now())
+        if chosen:
+            symbol, closes, decision = chosen
+            price = closes[-1]
+            context = _snapshot(closes)
+            context["scanned"] = scanned
+            db.record_signal(bot["id"], symbol, "BUY", price, decision.reason, context)
+            _buy(db, bot, wallet, symbol, price, spec.get("size_fraction", 1.0), decision.reason)
+            db.update_bot(bot["id"], status="running", last_reason=f"{symbol}: {decision.reason}",
+                          last_cycle=_now())
+        else:
+            # No entry anywhere — still log the move (HOLD) with what we saw.
+            first = _candidate_symbols(bot)[0]
+            closes = market.get_closes(first)
+            price = closes[-1] if closes else None
+            context = _snapshot(closes)
+            context["scanned"] = scanned
+            reason = "no entry across universe" if len(scanned) > 1 else "entry rule not met"
+            db.record_signal(bot["id"], first, "HOLD", price, reason, context)
+            db.update_bot(bot["id"], status="running", last_reason=reason, last_cycle=_now())
 
     if closed and bot["auto_adjust"]:
         _maybe_review(db, bot)

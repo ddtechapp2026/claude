@@ -15,8 +15,12 @@ Cloud (or any) Ubuntu VM and be controlled remotely from another network.
   and the AI converts it into safe trading rules.
 - **Learns from mistakes** — after several closed trades, each bot is reviewed
   and its risk/size parameters are auto-tuned **within guardrails**.
-- **Per-bot controls** — on/off, allocated cash, biggest trade, stop-loss,
-  take-profit, and a run-until deadline.
+- **Per-bot controls** — on/off, the crypto to trade (**any** pair, or **Auto**
+  to let the bot scan the whole universe and pick what fires), allocated cash,
+  biggest trade, stop-loss, take-profit, and a run-until deadline.
+- **Full decision journal** — every cycle records the symbol, signal, reasoning,
+  and the indicator snapshot behind it, per bot. One-click **Export data**
+  downloads the whole journal + trades as JSON to learn from.
 
 > ⚠️ Every bot trades a **simulated wallet** — no real orders are ever sent.
 > This is a research/paper sandbox. Not financial advice.

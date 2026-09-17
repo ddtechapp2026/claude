@@ -64,6 +64,7 @@ class Database:
                     bot_id         INTEGER PRIMARY KEY REFERENCES bots(id) ON DELETE CASCADE,
                     cash           REAL NOT NULL,
                     position_qty   REAL NOT NULL DEFAULT 0,
+                    position_symbol TEXT,              -- symbol currently held (NULL when flat)
                     entry_price    REAL,
                     equity         REAL NOT NULL,
                     realized_pnl   REAL NOT NULL DEFAULT 0,
@@ -74,6 +75,7 @@ class Database:
                     id             INTEGER PRIMARY KEY AUTOINCREMENT,
                     bot_id         INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
                     ts             TEXT NOT NULL,
+                    symbol         TEXT,
                     side           TEXT NOT NULL,       -- BUY / SELL
                     qty            REAL,
                     price          REAL,
@@ -93,9 +95,11 @@ class Database:
                     id             INTEGER PRIMARY KEY AUTOINCREMENT,
                     bot_id         INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
                     ts             TEXT NOT NULL,
+                    symbol         TEXT,
                     signal         TEXT NOT NULL,
                     price          REAL,
-                    detail         TEXT
+                    detail         TEXT,
+                    context        TEXT                -- JSON: indicator snapshot at decision time
                 );
 
                 CREATE TABLE IF NOT EXISTS ai_reviews (
@@ -112,6 +116,18 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_signals_bot ON signals(bot_id, id DESC);
                 """
             )
+            # Lightweight migrations: add columns that older DBs may lack, so a
+            # code update never requires wiping the database.
+            self._ensure_columns(conn, "wallets", {"position_symbol": "TEXT"})
+            self._ensure_columns(conn, "trades", {"symbol": "TEXT"})
+            self._ensure_columns(conn, "signals", {"symbol": "TEXT", "context": "TEXT"})
+
+    @staticmethod
+    def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+        existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        for col, decl in columns.items():
+            if col not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
 
     # --- bots ----------------------------------------------------------------
     def create_bot(self, **fields) -> int:
@@ -182,8 +198,8 @@ class Database:
         ts = now_iso()
         with self._conn() as conn:
             conn.execute(
-                """UPDATE wallets SET cash=?, position_qty=0, entry_price=NULL,
-                   equity=?, realized_pnl=0, updated=? WHERE bot_id=?""",
+                """UPDATE wallets SET cash=?, position_qty=0, position_symbol=NULL,
+                   entry_price=NULL, equity=?, realized_pnl=0, updated=? WHERE bot_id=?""",
                 (starting_cash, starting_cash, ts, bot_id),
             )
             conn.execute("DELETE FROM trades WHERE bot_id=?", (bot_id,))
@@ -191,12 +207,12 @@ class Database:
             conn.execute("DELETE FROM signals WHERE bot_id=?", (bot_id,))
 
     # --- events --------------------------------------------------------------
-    def record_trade(self, bot_id, side, qty, price, notional, pnl, reason) -> None:
+    def record_trade(self, bot_id, symbol, side, qty, price, notional, pnl, reason) -> None:
         with self._conn() as conn:
             conn.execute(
-                """INSERT INTO trades (bot_id,ts,side,qty,price,notional,pnl,reason)
-                   VALUES (?,?,?,?,?,?,?,?)""",
-                (bot_id, now_iso(), side, qty, price, notional, pnl, reason),
+                """INSERT INTO trades (bot_id,ts,symbol,side,qty,price,notional,pnl,reason)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (bot_id, now_iso(), symbol, side, qty, price, notional, pnl, reason),
             )
 
     def record_equity(self, bot_id, equity) -> None:
@@ -206,11 +222,12 @@ class Database:
                 (bot_id, now_iso(), equity),
             )
 
-    def record_signal(self, bot_id, signal, price, detail="") -> None:
+    def record_signal(self, bot_id, symbol, signal, price, detail="", context: dict | None = None) -> None:
         with self._conn() as conn:
             conn.execute(
-                "INSERT INTO signals (bot_id,ts,signal,price,detail) VALUES (?,?,?,?,?)",
-                (bot_id, now_iso(), signal, price, detail),
+                "INSERT INTO signals (bot_id,ts,symbol,signal,price,detail,context) VALUES (?,?,?,?,?,?,?)",
+                (bot_id, now_iso(), symbol, signal, price, detail,
+                 json.dumps(context) if context else None),
             )
 
     def record_review(self, bot_id, summary, changes: dict, source: str) -> None:
@@ -257,4 +274,17 @@ class Database:
             rows = conn.execute(
                 "SELECT * FROM ai_reviews WHERE bot_id=? ORDER BY id DESC LIMIT ?", (bot_id, limit)
             ).fetchall()
+            return [dict(r) for r in rows]
+
+    # --- full-history exports (learning dataset) -----------------------------
+    def all_trades(self, bot_id) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM trades WHERE bot_id=? ORDER BY id", (bot_id,)).fetchall()
+            return [dict(r) for r in rows]
+
+    def all_signals(self, bot_id) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM signals WHERE bot_id=? ORDER BY id", (bot_id,)).fetchall()
             return [dict(r) for r in rows]
