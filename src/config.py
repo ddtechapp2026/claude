@@ -50,6 +50,10 @@ class Settings:
     ai_review_min_trades: int   # min closed trades before a review runs
     ai_min_winrate: float       # review triggers when win-rate is below this
 
+    # Costs (defaults for new bots; editable per bot)
+    fee_pct: float              # trading fee per side, as a fraction (0.001 = 0.1%)
+    tax_pct: float              # estimated tax on net realized gains (0.30 = 30%)
+
     @property
     def ai_enabled(self) -> bool:
         return bool(self.openrouter_api_key) and "your_" not in self.openrouter_api_key
@@ -81,6 +85,8 @@ def load_settings() -> Settings:
         openrouter_base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip(),
         ai_review_min_trades=int(os.getenv("AI_REVIEW_MIN_TRADES", "5")),
         ai_min_winrate=float(os.getenv("AI_MIN_WINRATE", "0.45")),
+        fee_pct=float(os.getenv("FEE_PCT", "0.001")),
+        tax_pct=float(os.getenv("TAX_PCT", "0.30")),
     )
 
 

@@ -51,6 +51,8 @@ class Database:
                     max_trade_usd  REAL NOT NULL DEFAULT 1000,
                     stop_loss_pct  REAL NOT NULL DEFAULT 0.05,
                     take_profit_pct REAL NOT NULL DEFAULT 0.10,
+                    fee_pct        REAL NOT NULL DEFAULT 0.001,  -- trading fee per side
+                    tax_pct        REAL NOT NULL DEFAULT 0.30,   -- est. tax on net gains
                     run_until      TEXT,               -- ISO ts or NULL (forever)
                     auto_adjust    INTEGER NOT NULL DEFAULT 1,
                     status         TEXT NOT NULL DEFAULT 'idle',
@@ -67,7 +69,8 @@ class Database:
                     position_symbol TEXT,              -- symbol currently held (NULL when flat)
                     entry_price    REAL,
                     equity         REAL NOT NULL,
-                    realized_pnl   REAL NOT NULL DEFAULT 0,
+                    realized_pnl   REAL NOT NULL DEFAULT 0,   -- net of fees
+                    gross_realized REAL NOT NULL DEFAULT 0,   -- price-only, before fees
                     updated        TEXT NOT NULL
                 );
 
@@ -80,7 +83,9 @@ class Database:
                     qty            REAL,
                     price          REAL,
                     notional       REAL,
-                    pnl            REAL,                -- realized on SELL
+                    fee            REAL,                -- fee for this execution / round-trip
+                    gross_pnl      REAL,               -- SELL: price-only round-trip P&L
+                    pnl            REAL,                -- SELL: net round-trip P&L (after fees)
                     reason         TEXT
                 );
 
@@ -118,8 +123,17 @@ class Database:
             )
             # Lightweight migrations: add columns that older DBs may lack, so a
             # code update never requires wiping the database.
-            self._ensure_columns(conn, "wallets", {"position_symbol": "TEXT"})
-            self._ensure_columns(conn, "trades", {"symbol": "TEXT"})
+            self._ensure_columns(conn, "bots", {
+                "fee_pct": "REAL NOT NULL DEFAULT 0.001",
+                "tax_pct": "REAL NOT NULL DEFAULT 0.30",
+            })
+            self._ensure_columns(conn, "wallets", {
+                "position_symbol": "TEXT",
+                "gross_realized": "REAL NOT NULL DEFAULT 0",
+            })
+            self._ensure_columns(conn, "trades", {
+                "symbol": "TEXT", "fee": "REAL", "gross_pnl": "REAL",
+            })
             self._ensure_columns(conn, "signals", {"symbol": "TEXT", "context": "TEXT"})
 
     @staticmethod
@@ -136,6 +150,7 @@ class Database:
             "strategy_text": "", "strategy_spec": "{}",
             "starting_cash": 10000.0, "max_trade_usd": 1000.0,
             "stop_loss_pct": 0.05, "take_profit_pct": 0.10,
+            "fee_pct": 0.001, "tax_pct": 0.30,
             "run_until": None, "auto_adjust": 1, "status": "idle",
             "last_reason": "", "last_cycle": None,
         }
@@ -145,11 +160,11 @@ class Database:
             cur = conn.execute(
                 """INSERT INTO bots
                    (name,enabled,symbol,strategy_text,strategy_spec,starting_cash,
-                    max_trade_usd,stop_loss_pct,take_profit_pct,run_until,auto_adjust,
-                    status,last_reason,last_cycle,created,updated)
+                    max_trade_usd,stop_loss_pct,take_profit_pct,fee_pct,tax_pct,run_until,
+                    auto_adjust,status,last_reason,last_cycle,created,updated)
                    VALUES (:name,:enabled,:symbol,:strategy_text,:strategy_spec,
-                    :starting_cash,:max_trade_usd,:stop_loss_pct,:take_profit_pct,
-                    :run_until,:auto_adjust,:status,:last_reason,:last_cycle,:created,:updated)""",
+                    :starting_cash,:max_trade_usd,:stop_loss_pct,:take_profit_pct,:fee_pct,
+                    :tax_pct,:run_until,:auto_adjust,:status,:last_reason,:last_cycle,:created,:updated)""",
                 {**cols, "created": ts, "updated": ts},
             )
             bot_id = cur.lastrowid
@@ -199,7 +214,8 @@ class Database:
         with self._conn() as conn:
             conn.execute(
                 """UPDATE wallets SET cash=?, position_qty=0, position_symbol=NULL,
-                   entry_price=NULL, equity=?, realized_pnl=0, updated=? WHERE bot_id=?""",
+                   entry_price=NULL, equity=?, realized_pnl=0, gross_realized=0,
+                   updated=? WHERE bot_id=?""",
                 (starting_cash, starting_cash, ts, bot_id),
             )
             conn.execute("DELETE FROM trades WHERE bot_id=?", (bot_id,))
@@ -207,12 +223,13 @@ class Database:
             conn.execute("DELETE FROM signals WHERE bot_id=?", (bot_id,))
 
     # --- events --------------------------------------------------------------
-    def record_trade(self, bot_id, symbol, side, qty, price, notional, pnl, reason) -> None:
+    def record_trade(self, bot_id, symbol, side, qty, price, notional, pnl, reason,
+                     fee=0.0, gross_pnl=None) -> None:
         with self._conn() as conn:
             conn.execute(
-                """INSERT INTO trades (bot_id,ts,symbol,side,qty,price,notional,pnl,reason)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
-                (bot_id, now_iso(), symbol, side, qty, price, notional, pnl, reason),
+                """INSERT INTO trades (bot_id,ts,symbol,side,qty,price,notional,fee,gross_pnl,pnl,reason)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (bot_id, now_iso(), symbol, side, qty, price, notional, fee, gross_pnl, pnl, reason),
             )
 
     def record_equity(self, bot_id, equity) -> None:

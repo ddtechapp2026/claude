@@ -89,27 +89,41 @@ def _candidate_symbols(bot: dict) -> list[str]:
 def _sell(db: Database, bot: dict, wallet: dict, symbol: str, price: float, reason: str) -> float:
     qty = wallet["position_qty"]
     entry = wallet["entry_price"] or price
+    fee_pct = bot.get("fee_pct", 0.0) or 0.0
     proceeds = qty * price
-    pnl = proceeds - qty * entry
-    db.update_wallet(bot["id"], cash=wallet["cash"] + proceeds, position_qty=0.0,
+    buy_notional = qty * entry
+    sell_fee = proceeds * fee_pct
+    buy_fee = buy_notional * fee_pct          # fee paid when this position was opened
+    gross = proceeds - buy_notional           # price-only round-trip P&L
+    round_fee = buy_fee + sell_fee
+    net = gross - round_fee                    # after both fees
+    db.update_wallet(bot["id"], cash=wallet["cash"] + proceeds - sell_fee, position_qty=0.0,
                      position_symbol=None, entry_price=None,
-                     realized_pnl=wallet["realized_pnl"] + pnl,
-                     equity=wallet["cash"] + proceeds)
-    db.record_trade(bot["id"], symbol, "SELL", qty, price, proceeds, pnl, reason)
-    log.info("[%s] SELL %s %.6f @ %.2f  pnl=%+.2f (%s)", bot["name"], symbol, qty, price, pnl, reason)
-    return pnl
+                     realized_pnl=wallet["realized_pnl"] + net,
+                     gross_realized=wallet["gross_realized"] + gross,
+                     equity=wallet["cash"] + proceeds - sell_fee)
+    db.record_trade(bot["id"], symbol, "SELL", qty, price, proceeds, net, reason,
+                    fee=round_fee, gross_pnl=gross)
+    log.info("[%s] SELL %s %.6f @ %.2f  gross=%+.2f fee=%.2f net=%+.2f (%s)",
+             bot["name"], symbol, qty, price, gross, round_fee, net, reason)
+    return net
 
 
 def _buy(db: Database, bot: dict, wallet: dict, symbol: str, price: float,
          size_fraction: float, reason: str) -> bool:
-    notional = min(bot["max_trade_usd"], wallet["cash"] * size_fraction)
-    if notional < _MIN_NOTIONAL or notional > wallet["cash"]:
+    fee_pct = bot.get("fee_pct", 0.0) or 0.0
+    # Reserve room for the buy fee so we never overspend the wallet.
+    notional = min(bot["max_trade_usd"], wallet["cash"] / (1 + fee_pct) * size_fraction)
+    fee = notional * fee_pct
+    if notional < _MIN_NOTIONAL or (notional + fee) > wallet["cash"]:
         return False
     qty = notional / price
-    db.update_wallet(bot["id"], cash=wallet["cash"] - notional, position_qty=qty,
-                     position_symbol=symbol, entry_price=price, equity=wallet["cash"])
-    db.record_trade(bot["id"], symbol, "BUY", qty, price, notional, None, reason)
-    log.info("[%s] BUY  %s %.6f @ %.2f  ($%.2f) (%s)", bot["name"], symbol, qty, price, notional, reason)
+    db.update_wallet(bot["id"], cash=wallet["cash"] - notional - fee, position_qty=qty,
+                     position_symbol=symbol, entry_price=price,
+                     equity=wallet["cash"] - fee)  # equity drops by the fee only
+    db.record_trade(bot["id"], symbol, "BUY", qty, price, notional, None, reason, fee=fee)
+    log.info("[%s] BUY  %s %.6f @ %.2f  ($%.2f, fee %.2f) (%s)",
+             bot["name"], symbol, qty, price, notional, fee, reason)
     return True
 
 

@@ -93,7 +93,7 @@ function renderTabs(){
 }
 
 function detailHTML(d){
-  const b=d.bot, w=b.wallet||{};
+  const b=d.bot, w=b.wallet||{}, c=b.costs||{};
   const held = (w.position_qty||0)>0;
   const runUntilVal = b.run_until ? b.run_until.slice(0,16) : "";
   return `
@@ -121,6 +121,29 @@ function detailHTML(d){
   <div class="panel"><h2>Equity curve</h2><canvas id="equityChart" style="max-height:260px"></canvas></div>
 
   <div class="panel">
+    <h2>P&amp;L breakdown <span class="muted" style="text-transform:none">(fees &amp; taxes accounted for)</span></h2>
+    <table style="max-width:520px">
+      <tbody>
+        <tr><td>Gross trading P/L <span class="muted">(realized, before costs)</span></td>
+            <td class="right ${c.gross_realized>=0?'pos':'neg'}">${fmtUsd(c.gross_realized)}</td></tr>
+        <tr><td>− Fees paid <span class="muted">(${(b.fee_pct*100).toFixed(2)}%/side)</span></td>
+            <td class="right neg">−${fmtUsd(c.fees)}</td></tr>
+        <tr><td><b>= Net after fees</b></td>
+            <td class="right ${c.net_after_fees>=0?'pos':'neg'}"><b>${fmtUsd(c.net_after_fees)}</b></td></tr>
+        <tr><td>− Estimated taxes <span class="muted">(${(c.tax_pct*100).toFixed(0)}% of net gains)</span></td>
+            <td class="right neg">−${fmtUsd(c.est_tax)}</td></tr>
+        <tr><td><b>= Net realized P/L</b></td>
+            <td class="right ${c.net_realized>=0?'pos':'neg'}"><b>${fmtUsd(c.net_realized)}</b></td></tr>
+        <tr><td>Unrealized P/L <span class="muted">(open position, pre-tax)</span></td>
+            <td class="right ${c.unrealized>=0?'pos':'neg'}">${fmtUsd(c.unrealized)}</td></tr>
+        <tr style="border-top:2px solid var(--border)"><td><b>Total P/L (all-in)</b></td>
+            <td class="right ${c.total_pnl>=0?'pos':'neg'}"><b>${fmtUsd(c.total_pnl)}</b></td></tr>
+      </tbody>
+    </table>
+    <div class="muted" style="margin-top:8px;font-size:12px">Taxes are a rough estimate (flat rate on net realized gains); real crypto taxes depend on holding period and your bracket.</div>
+  </div>
+
+  <div class="panel">
     <h2>How this bot trades (plain English)</h2>
     <div id="strat-banner"></div>
     <textarea id="strat-text" placeholder="e.g. Buy when RSI drops below 30, sell when it goes above 70. Use 40% of cash.">${b.strategy_text||""}</textarea>
@@ -139,6 +162,8 @@ function detailHTML(d){
       <div><label>Biggest trade (USD)</label><input id="f-max" type="number" value="${b.max_trade_usd}"></div>
       <div><label>Stop loss (%)</label><input id="f-stop" type="number" step="0.1" value="${(b.stop_loss_pct*100).toFixed(1)}"></div>
       <div><label>Take profit (%)</label><input id="f-tp" type="number" step="0.1" value="${(b.take_profit_pct*100).toFixed(1)}"></div>
+      <div><label>Trading fee per side (%)</label><input id="f-fee" type="number" step="0.01" value="${(b.fee_pct*100).toFixed(2)}"></div>
+      <div><label>Estimated tax (%)</label><input id="f-tax" type="number" step="1" value="${(b.tax_pct*100).toFixed(0)}"></div>
       <div><label>Run until (blank = forever)</label><input id="f-until" type="datetime-local" value="${runUntilVal}"></div>
       <div><label>Auto-learn from mistakes</label><select id="f-auto"><option value="1" ${b.auto_adjust?'selected':''}>On</option><option value="0" ${!b.auto_adjust?'selected':''}>Off</option></select></div>
     </div>
@@ -147,12 +172,13 @@ function detailHTML(d){
   </div>
 
   <div class="panel overflow"><h2>Recent trades</h2>
-    <table><thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th class="right">Qty</th><th class="right">Price</th><th class="right">Notional</th><th class="right">P/L</th><th>Reason</th></tr></thead>
+    <table><thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th class="right">Qty</th><th class="right">Price</th><th class="right">Notional</th><th class="right">Fee</th><th class="right">Net P/L</th><th>Reason</th></tr></thead>
     <tbody>${(d.trades||[]).map(t=>`<tr><td>${fmtTime(t.ts)}</td><td><span class="tag">${t.symbol||'-'}</span></td><td><span class="tag ${t.side}">${t.side}</span></td>
       <td class="right">${t.qty?Number(t.qty).toFixed(6):'-'}</td><td class="right">${fmtUsd(t.price)}</td>
       <td class="right">${t.notional?fmtUsd(t.notional):'-'}</td>
+      <td class="right muted">${t.fee!=null?fmtUsd(t.fee):'-'}</td>
       <td class="right ${((t.pnl||0)>=0)?'pos':'neg'}">${t.pnl!=null?fmtUsd(t.pnl):'-'}</td>
-      <td class="muted">${t.reason||''}</td></tr>`).join("")||`<tr><td colspan="8" class="muted">No trades yet.</td></tr>`}</tbody></table>
+      <td class="muted">${t.reason||''}</td></tr>`).join("")||`<tr><td colspan="9" class="muted">No trades yet.</td></tr>`}</tbody></table>
   </div>
 
   <div class="panel overflow"><h2>AI learning log</h2>
@@ -214,6 +240,7 @@ async function saveConfig(id){
   const body={name:el("f-name").value,symbol:el("f-symbol").value,
     starting_cash:parseFloat(el("f-cash").value),max_trade_usd:parseFloat(el("f-max").value),
     stop_loss_pct:parseFloat(el("f-stop").value),take_profit_pct:parseFloat(el("f-tp").value),
+    fee_pct:parseFloat(el("f-fee").value),tax_pct:parseFloat(el("f-tax").value),
     run_until:until?new Date(until).toISOString():"",auto_adjust:el("f-auto").value==="1"};
   el("cfg-msg").textContent="Saving…";
   try{await api(`/api/bots/${id}/config`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});

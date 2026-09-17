@@ -37,6 +37,31 @@ def _bot_view(bot: dict) -> dict:
         summary = strategy_engine.describe(spec)
     except Exception:  # noqa: BLE001
         summary = "(invalid strategy)"
+
+    # --- P&L breakdown: gross trading -> fees -> taxes -> net ---------------
+    gross_realized = wallet.get("gross_realized", 0.0) or 0.0
+    net_after_fees = wallet.get("realized_pnl", 0.0) or 0.0     # already fee-adjusted
+    fees = gross_realized - net_after_fees                       # fees on closed trades
+    tax_pct = bot.get("tax_pct", 0.0) or 0.0
+    est_tax = tax_pct * max(0.0, net_after_fees)                 # taxed only on net gains
+    net_realized = net_after_fees - est_tax
+    # Unrealized (open position), net of the exit fee it would incur.
+    qty = wallet.get("position_qty", 0.0) or 0.0
+    entry = wallet.get("entry_price") or 0.0
+    unrealized = 0.0
+    if qty > 0 and entry:
+        cur_price = (equity - wallet.get("cash", 0.0)) / qty if qty else entry
+        unrealized = (cur_price - entry) * qty
+    costs = {
+        "gross_realized": gross_realized,
+        "fees": fees,
+        "net_after_fees": net_after_fees,
+        "tax_pct": tax_pct,
+        "est_tax": est_tax,
+        "net_realized": net_realized,
+        "unrealized": unrealized,
+        "total_pnl": net_realized + unrealized,   # everything accounted for
+    }
     return {
         **bot,
         "wallet": wallet,
@@ -44,6 +69,7 @@ def _bot_view(bot: dict) -> dict:
         "pnl": pnl,
         "pnl_pct": (pnl / bot["starting_cash"] * 100) if bot["starting_cash"] else 0.0,
         "strategy_summary": summary,
+        "costs": costs,
     }
 
 
@@ -98,16 +124,20 @@ class ConfigIn(BaseModel):
     symbol: Optional[str] = None
     starting_cash: Optional[float] = None
     max_trade_usd: Optional[float] = None
-    stop_loss_pct: Optional[float] = None      # accepts percent (5) or fraction (0.05)
+    stop_loss_pct: Optional[float] = None      # sent as a percent number, e.g. 5 == 5%
     take_profit_pct: Optional[float] = None
+    fee_pct: Optional[float] = None            # per-side trading fee, percent (0.1 == 0.1%)
+    tax_pct: Optional[float] = None            # est. tax on net gains, percent (30 == 30%)
     run_until: Optional[str] = None            # ISO ts, "" clears it
     auto_adjust: Optional[bool] = None
 
 
 def _norm_pct(v: float | None) -> float | None:
+    # The dashboard always sends these as percent numbers (5 == 5%), so convert
+    # to the fraction the engine stores. 0.1 -> 0.001, 30 -> 0.30.
     if v is None:
         return None
-    return v / 100.0 if v > 1 else v  # treat 5 as 5%, 0.05 as 5%
+    return v / 100.0
 
 
 @app.post("/api/bots/{bot_id}/config")
@@ -124,6 +154,10 @@ def api_config(bot_id: int, cfg: ConfigIn) -> JSONResponse:
         fields["stop_loss_pct"] = _norm_pct(cfg.stop_loss_pct)
     if cfg.take_profit_pct is not None:
         fields["take_profit_pct"] = _norm_pct(cfg.take_profit_pct)
+    if cfg.fee_pct is not None:
+        fields["fee_pct"] = _norm_pct(cfg.fee_pct)
+    if cfg.tax_pct is not None:
+        fields["tax_pct"] = _norm_pct(cfg.tax_pct)
     if cfg.run_until is not None:
         fields["run_until"] = cfg.run_until or None
     if cfg.auto_adjust is not None:

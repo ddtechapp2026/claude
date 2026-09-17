@@ -21,6 +21,10 @@ Cloud (or any) Ubuntu VM and be controlled remotely from another network.
 - **Full decision journal** — every cycle records the symbol, signal, reasoning,
   and the indicator snapshot behind it, per bot. One-click **Export data**
   downloads the whole journal + trades as JSON to learn from.
+- **Fees & taxes accounted for** — a per-bot P&L breakdown shows gross trading
+  P/L → minus fees (charged on every buy/sell) → minus estimated taxes → net.
+  Fee % and tax % are editable per bot (`FEE_PCT` / `TAX_PCT` defaults). The tax
+  line is a rough estimate, not tax advice.
 
 > ⚠️ Every bot trades a **simulated wallet** — no real orders are ever sent.
 > This is a research/paper sandbox. Not financial advice.
