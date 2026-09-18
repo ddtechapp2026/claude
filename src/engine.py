@@ -119,12 +119,39 @@ def _buy(db: Database, bot: dict, wallet: dict, symbol: str, price: float,
         return False
     qty = notional / price
     db.update_wallet(bot["id"], cash=wallet["cash"] - notional - fee, position_qty=qty,
-                     position_symbol=symbol, entry_price=price,
+                     position_symbol=symbol, entry_price=price, peak_price=price,
                      equity=wallet["cash"] - fee)  # equity drops by the fee only
     db.record_trade(bot["id"], symbol, "BUY", qty, price, notional, None, reason, fee=fee)
     log.info("[%s] BUY  %s %.6f @ %.2f  ($%.2f, fee %.2f) (%s)",
              bot["name"], symbol, qty, price, notional, fee, reason)
     return True
+
+
+def _effective_stop(bot: dict, entry: float, peak: float, ai_control: bool) -> tuple[float, str]:
+    """Return (stop_price, reason).
+
+    The user's stop_loss_pct is a HARD guardrail: the position can never risk
+    more than that from entry. With AI Control on, the stop only ever *tightens*
+    within that guardrail: it trails the peak by the same distance and locks to
+    break-even once the trade is up by one risk unit. With AI Control off, the
+    stop is the fixed guardrail level, exactly as set.
+    """
+    stop_pct = bot["stop_loss_pct"] or 0.0
+    if stop_pct <= 0:
+        return 0.0, "stop-loss"
+    hard = entry * (1 - stop_pct)               # worst allowed (guardrail floor)
+    if not ai_control:
+        return hard, "stop-loss"
+    trail = peak * (1 - stop_pct)               # trails the peak by the risk distance
+    breakeven = entry if peak >= entry * (1 + stop_pct) else 0.0
+    eff = max(hard, trail, breakeven)
+    if eff <= hard + 1e-12:
+        reason = "stop-loss"
+    elif breakeven >= trail and breakeven == eff:
+        reason = "break-even stop"
+    else:
+        reason = "trailing stop"
+    return eff, reason
 
 
 def run_bot(db: Database, bot: dict) -> None:
@@ -155,19 +182,31 @@ def run_bot(db: Database, bot: dict) -> None:
         db.record_equity(bot["id"], equity)
 
         entry = wallet["entry_price"] or price
+        ai_control = bool(bot.get("ai_control", 1))
+        # Track the peak since entry (drives the trailing stop when AI Control is on).
+        peak = max(wallet.get("peak_price") or entry, price)
+        if peak != wallet.get("peak_price"):
+            db.update_wallet(bot["id"], peak_price=peak)
+
         if _expired(bot["run_until"]):
             _sell(db, bot, wallet, symbol, price, "run ended")
             db.update_bot(bot["id"], enabled=0, status="finished",
                           last_reason="run window ended", last_cycle=_now())
             return
-        if bot["stop_loss_pct"] > 0 and price <= entry * (1 - bot["stop_loss_pct"]):
-            decision = strategy_engine.Decision(strategy_engine.SELL, "stop-loss")
+
+        stop_price, stop_reason = _effective_stop(bot, entry, peak, ai_control)
+        if bot["stop_loss_pct"] > 0 and price <= stop_price:
+            decision = strategy_engine.Decision(strategy_engine.SELL, stop_reason)
         elif bot["take_profit_pct"] > 0 and price >= entry * (1 + bot["take_profit_pct"]):
-            decision = strategy_engine.Decision(strategy_engine.SELL, "take-profit")
+            decision = strategy_engine.Decision(strategy_engine.SELL, "take-profit (guardrail)")
         else:
             decision = strategy_engine.evaluate(spec, closes, has_position=True, entry_price=entry)
 
-        db.record_signal(bot["id"], symbol, decision.signal, price, decision.reason, _snapshot(closes))
+        context = _snapshot(closes)
+        context["ai_control"] = ai_control
+        context["effective_stop"] = round(stop_price, 4)
+        context["peak"] = round(peak, 4)
+        db.record_signal(bot["id"], symbol, decision.signal, price, decision.reason, context)
         if decision.signal == strategy_engine.SELL:
             _sell(db, bot, wallet, symbol, price, decision.reason)
             closed = True
@@ -214,40 +253,34 @@ def run_bot(db: Database, bot: dict) -> None:
             db.record_signal(bot["id"], first, "HOLD", price, reason, context)
             db.update_bot(bot["id"], status="running", last_reason=reason, last_cycle=_now())
 
-    if closed and bot["auto_adjust"]:
+    if closed and bool(bot.get("ai_control", 1)):
         _maybe_review(db, bot)
 
 
 def _maybe_review(db: Database, bot: dict) -> None:
-    """Run the learning loop every N closed trades and auto-apply within guardrails."""
+    """Between-trade learning (AI Control only): tune position SIZE from results.
+
+    Stop-loss and take-profit are the user's guardrails and are never widened by
+    learning — the AI manages within them via the trailing/break-even logic in
+    _effective_stop. So the learning loop only adjusts how much cash to deploy.
+    """
     closed = db.closed_trades(bot["id"], limit=100)
     n = len(closed)
     if n < settings.ai_review_min_trades or (n % settings.ai_review_min_trades) != 0:
         return
 
-    fresh = db.get_bot(bot["id"])  # current values before tuning
+    fresh = db.get_bot(bot["id"])
     changes, summary, source = llm.review_trades(fresh, closed[: settings.ai_review_min_trades * 2])
     applied: dict = {}
 
-    for field in ("stop_loss_pct", "take_profit_pct", "size_fraction"):
-        if field not in changes:
-            continue
-        proposed = changes[field]
-        if field == "size_fraction":
-            spec = strategy_engine.validate_spec(json.loads(fresh["strategy_spec"] or "{}"))
-            current = float(spec.get("size_fraction", 1.0))
-            new = current * 0.85 if proposed is None else float(proposed)
-            new = _clamp(field, new)
-            spec["size_fraction"] = new
-            db.update_bot(bot["id"], strategy_spec=json.dumps(spec))
-            applied[field] = round(new, 4)
-        else:
-            current = float(fresh[field])
-            factor = 0.8 if field == "stop_loss_pct" else 1.0
-            new = current * factor if proposed is None else float(proposed)
-            new = _clamp(field, new)
-            db.update_bot(bot["id"], **{field: new})
-            applied[field] = round(new, 4)
+    if "size_fraction" in changes:
+        proposed = changes["size_fraction"]
+        spec = strategy_engine.validate_spec(json.loads(fresh["strategy_spec"] or "{}"))
+        current = float(spec.get("size_fraction", 1.0))
+        new = _clamp("size_fraction", current * 0.85 if proposed is None else float(proposed))
+        spec["size_fraction"] = new
+        db.update_bot(bot["id"], strategy_spec=json.dumps(spec))
+        applied["size_fraction"] = round(new, 4)
 
     db.record_review(bot["id"], summary, applied, source)
     if applied:

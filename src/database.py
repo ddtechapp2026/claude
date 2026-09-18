@@ -55,6 +55,7 @@ class Database:
                     tax_pct        REAL NOT NULL DEFAULT 0.30,   -- est. tax on net gains
                     run_until      TEXT,               -- ISO ts or NULL (forever)
                     auto_adjust    INTEGER NOT NULL DEFAULT 1,
+                    ai_control     INTEGER NOT NULL DEFAULT 1,  -- AI manages within guardrails
                     status         TEXT NOT NULL DEFAULT 'idle',
                     last_reason    TEXT NOT NULL DEFAULT '',
                     last_cycle     TEXT,
@@ -68,6 +69,7 @@ class Database:
                     position_qty   REAL NOT NULL DEFAULT 0,
                     position_symbol TEXT,              -- symbol currently held (NULL when flat)
                     entry_price    REAL,
+                    peak_price     REAL,              -- highest price since entry (for trailing)
                     equity         REAL NOT NULL,
                     realized_pnl   REAL NOT NULL DEFAULT 0,   -- net of fees
                     gross_realized REAL NOT NULL DEFAULT 0,   -- price-only, before fees
@@ -126,10 +128,12 @@ class Database:
             self._ensure_columns(conn, "bots", {
                 "fee_pct": "REAL NOT NULL DEFAULT 0.001",
                 "tax_pct": "REAL NOT NULL DEFAULT 0.30",
+                "ai_control": "INTEGER NOT NULL DEFAULT 1",
             })
             self._ensure_columns(conn, "wallets", {
                 "position_symbol": "TEXT",
                 "gross_realized": "REAL NOT NULL DEFAULT 0",
+                "peak_price": "REAL",
             })
             self._ensure_columns(conn, "trades", {
                 "symbol": "TEXT", "fee": "REAL", "gross_pnl": "REAL",
@@ -151,7 +155,7 @@ class Database:
             "starting_cash": 10000.0, "max_trade_usd": 1000.0,
             "stop_loss_pct": 0.05, "take_profit_pct": 0.10,
             "fee_pct": 0.001, "tax_pct": 0.30,
-            "run_until": None, "auto_adjust": 1, "status": "idle",
+            "run_until": None, "auto_adjust": 1, "ai_control": 1, "status": "idle",
             "last_reason": "", "last_cycle": None,
         }
         cols.update(fields)
@@ -161,10 +165,10 @@ class Database:
                 """INSERT INTO bots
                    (name,enabled,symbol,strategy_text,strategy_spec,starting_cash,
                     max_trade_usd,stop_loss_pct,take_profit_pct,fee_pct,tax_pct,run_until,
-                    auto_adjust,status,last_reason,last_cycle,created,updated)
+                    auto_adjust,ai_control,status,last_reason,last_cycle,created,updated)
                    VALUES (:name,:enabled,:symbol,:strategy_text,:strategy_spec,
                     :starting_cash,:max_trade_usd,:stop_loss_pct,:take_profit_pct,:fee_pct,
-                    :tax_pct,:run_until,:auto_adjust,:status,:last_reason,:last_cycle,:created,:updated)""",
+                    :tax_pct,:run_until,:auto_adjust,:ai_control,:status,:last_reason,:last_cycle,:created,:updated)""",
                 {**cols, "created": ts, "updated": ts},
             )
             bot_id = cur.lastrowid
@@ -214,7 +218,7 @@ class Database:
         with self._conn() as conn:
             conn.execute(
                 """UPDATE wallets SET cash=?, position_qty=0, position_symbol=NULL,
-                   entry_price=NULL, equity=?, realized_pnl=0, gross_realized=0,
+                   entry_price=NULL, peak_price=NULL, equity=?, realized_pnl=0, gross_realized=0,
                    updated=? WHERE bot_id=?""",
                 (starting_cash, starting_cash, ts, bot_id),
             )

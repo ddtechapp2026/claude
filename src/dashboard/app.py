@@ -130,6 +130,7 @@ class ConfigIn(BaseModel):
     tax_pct: Optional[float] = None            # est. tax on net gains, percent (30 == 30%)
     run_until: Optional[str] = None            # ISO ts, "" clears it
     auto_adjust: Optional[bool] = None
+    ai_control: Optional[bool] = None
 
 
 def _norm_pct(v: float | None) -> float | None:
@@ -162,6 +163,8 @@ def api_config(bot_id: int, cfg: ConfigIn) -> JSONResponse:
         fields["run_until"] = cfg.run_until or None
     if cfg.auto_adjust is not None:
         fields["auto_adjust"] = 1 if cfg.auto_adjust else 0
+    if cfg.ai_control is not None:
+        fields["ai_control"] = 1 if cfg.ai_control else 0
     _db.update_bot(bot_id, **fields)
     return JSONResponse({"ok": True, "bot": _bot_view(_db.get_bot(bot_id))})
 

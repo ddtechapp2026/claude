@@ -55,6 +55,14 @@
     .banner.warn{background:#d2992222;border:1px solid var(--amber)}
     .pill{font-size:11px;padding:2px 8px;border-radius:999px;background:#30363d;color:var(--muted)}
     .pill.ai{background:#1f6feb33;color:var(--accent)}
+    /* AI Control slide switch */
+    .switch{position:relative;display:inline-flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
+    .switch input{position:absolute;opacity:0;width:0;height:0}
+    .switch .track{width:46px;height:26px;background:#30363d;border-radius:999px;position:relative;transition:background .15s;flex:0 0 auto}
+    .switch .track::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .15s}
+    .switch input:checked + .track{background:var(--accent)}
+    .switch input:checked + .track::after{transform:translateX(20px)}
+    .aibox{border:1px solid var(--border);border-radius:10px;padding:12px;background:#0d1117;margin-top:12px}
   </style>
 </head>
 <body>
@@ -108,7 +116,7 @@ function detailHTML(d){
 
   <div class="panel">
     <div class="row" style="justify-content:space-between">
-      <div><b>${b.name}</b> <span class="pill">${b.symbol}</span> ${b.auto_adjust?'<span class="pill ai">auto-learn on</span>':''}</div>
+      <div><b>${b.name}</b> <span class="pill">${b.symbol}</span> <span class="pill ${b.ai_control?'ai':''}">AI Control ${b.ai_control?'ON':'OFF'}</span></div>
       <div class="row">
         <button class="${b.enabled?'on':'off'}" onclick="toggleBot(${b.id})">${b.enabled?'⏸ Turn OFF':'▶ Turn ON'}</button>
         <a href="/api/bots/${b.id}/export" download style="text-decoration:none"><button>⬇ Export data</button></a>
@@ -116,6 +124,15 @@ function detailHTML(d){
       </div>
     </div>
     <div class="muted" style="margin-top:8px">Trades: ${b.strategy_summary}</div>
+    <div class="aibox">
+      <label class="switch"><input type="checkbox" ${b.ai_control?'checked':''} onchange="setAiControl(${b.id}, this.checked)">
+        <span class="track"></span><b>AI Control</b></label>
+      <div class="muted" style="margin-top:8px;font-size:13px">
+        ${b.ai_control
+          ? '<b style="color:var(--accent)">ON:</b> the bot follows its own strategy and actively manages the trade — trailing the stop and moving it to break-even, and tuning position size as it learns. Your stop-loss and take-profit are <b>hard guardrails it can only tighten within, never exceed</b>.'
+          : '<b>OFF:</b> your controls are the answer. Fixed stop-loss and take-profit exactly as set, strategy entry/exit as written. <b>No dynamic adjustments and no learning.</b>'}
+      </div>
+    </div>
   </div>
 
   <div class="panel"><h2>Equity curve</h2><canvas id="equityChart" style="max-height:260px"></canvas></div>
@@ -165,8 +182,8 @@ function detailHTML(d){
       <div><label>Trading fee per side (%)</label><input id="f-fee" type="number" step="0.01" value="${(b.fee_pct*100).toFixed(2)}"></div>
       <div><label>Estimated tax (%)</label><input id="f-tax" type="number" step="1" value="${(b.tax_pct*100).toFixed(0)}"></div>
       <div><label>Run until (blank = forever)</label><input id="f-until" type="datetime-local" value="${runUntilVal}"></div>
-      <div><label>Auto-learn from mistakes</label><select id="f-auto"><option value="1" ${b.auto_adjust?'selected':''}>On</option><option value="0" ${!b.auto_adjust?'selected':''}>Off</option></select></div>
     </div>
+    <div class="muted" style="margin-bottom:10px;font-size:12px">Stop-loss & take-profit are your guardrails. With AI Control ON (above) the bot manages within them; with it OFF they're fixed.</div>
     <button class="primary" onclick="saveConfig(${b.id})">Save controls</button>
     <span id="cfg-msg" class="muted"></span>
   </div>
@@ -223,6 +240,10 @@ async function loadBots(){
 }
 
 async function toggleBot(id){await api(`/api/bots/${id}/toggle`,{method:"POST"}); await loadBots(); await loadDetail();}
+async function setAiControl(id, on){
+  await api(`/api/bots/${id}/config`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ai_control:on})});
+  await loadBots(); await loadDetail();
+}
 async function resetBot(id){if(!confirm("Reset this bot's wallet and clear its history?"))return;
   await api(`/api/bots/${id}/reset`,{method:"POST"}); await loadBots(); await loadDetail();}
 
@@ -241,7 +262,7 @@ async function saveConfig(id){
     starting_cash:parseFloat(el("f-cash").value),max_trade_usd:parseFloat(el("f-max").value),
     stop_loss_pct:parseFloat(el("f-stop").value),take_profit_pct:parseFloat(el("f-tp").value),
     fee_pct:parseFloat(el("f-fee").value),tax_pct:parseFloat(el("f-tax").value),
-    run_until:until?new Date(until).toISOString():"",auto_adjust:el("f-auto").value==="1"};
+    run_until:until?new Date(until).toISOString():""};
   el("cfg-msg").textContent="Saving…";
   try{await api(`/api/bots/${id}/config`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     el("cfg-msg").textContent="Saved ✓"; await loadBots(); await loadDetail();

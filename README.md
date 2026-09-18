@@ -13,8 +13,12 @@ Cloud (or any) Ubuntu VM and be controlled remotely from another network.
 - **Plain-English strategies** — describe how a bot should trade in normal words
   ("buy when RSI drops below 30, sell when up 3% or down 2%, use 40% of cash")
   and the AI converts it into safe trading rules.
-- **Learns from mistakes** — after several closed trades, each bot is reviewed
-  and its risk/size parameters are auto-tuned **within guardrails**.
+- **AI Control switch (per bot)** — **ON:** the bot follows its own strategy and
+  actively manages the open trade (trailing stop + auto break-even, and tunes
+  position size as it learns), with your stop-loss/take-profit as **hard
+  guardrails it can only tighten within, never exceed**. **OFF:** your controls
+  are the literal answer — fixed stop/take-profit, no dynamic changes, no
+  learning.
 - **Per-bot controls** — on/off, the crypto to trade (**any** pair, or **Auto**
   to let the bot scan the whole universe and pick what fires), allocated cash,
   biggest trade, stop-loss, take-profit, and a run-until deadline.
