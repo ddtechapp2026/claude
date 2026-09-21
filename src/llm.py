@@ -68,6 +68,41 @@ def _chat(system: str, user: str, max_tokens: int = 700) -> str | None:
         return None
 
 
+def diagnostic() -> dict:
+    """Make ONE real OpenRouter call and report exactly what happened.
+
+    Unlike _chat this does not swallow errors — it returns the HTTP status and
+    body so the dashboard can show why the AI isn't working.
+    """
+    if not settings.ai_enabled:
+        return {"ok": False, "stage": "config", "model": settings.effective_model,
+                "detail": ("No OpenRouter API key loaded (empty or still the placeholder). "
+                           "Add OPENROUTER_API_KEY to .env and restart the services.")}
+    try:
+        resp = requests.post(
+            f"{settings.openrouter_base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.openrouter_api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://github.com/ddtechapp2026/claude",
+                "X-Title": "Stonks",
+            },
+            json={"model": settings.effective_model,
+                  "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
+                  "max_tokens": 8, "temperature": 0},
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            return {"ok": False, "stage": "http", "status": resp.status_code,
+                    "model": settings.effective_model, "detail": resp.text[:500]}
+        content = resp.json()["choices"][0]["message"]["content"]
+        return {"ok": True, "status": 200, "model": settings.effective_model,
+                "detail": f"Model replied: {content.strip()[:120]}"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "stage": "exception", "model": settings.effective_model,
+                "detail": str(exc)}
+
+
 def _extract_json(text: str) -> dict:
     text = text.strip()
     # tolerate ```json ... ``` fences

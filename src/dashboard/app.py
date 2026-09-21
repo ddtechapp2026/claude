@@ -78,6 +78,12 @@ def healthz() -> dict:
     return {"ok": True}
 
 
+@app.get("/api/ai/test")
+def api_ai_test() -> JSONResponse:
+    """Make one real OpenRouter call and report the result, for diagnostics."""
+    return JSONResponse(llm.diagnostic())
+
+
 @app.get("/api/bots")
 def api_bots() -> JSONResponse:
     bots = [_bot_view(b) for b in _db.list_bots()]

@@ -68,8 +68,11 @@
 <body>
   <header>
     <h1><span>Stonks</span> &middot; multi-bot control center</h1>
-    <div class="muted">AI: <span id="ai-state">-</span> &middot; updated <span id="updated">-</span></div>
+    <div class="muted">AI: <span id="ai-state">-</span>
+      <button onclick="testAi()" style="padding:2px 8px;font-size:12px;margin-left:6px">Test AI</button>
+      &middot; updated <span id="updated">-</span></div>
   </header>
+  <div id="ai-test"></div>
 
   <div class="tabs" id="tabs"></div>
   <div id="detail"></div>
@@ -242,6 +245,14 @@ async function loadBots(){
 }
 
 async function toggleBot(id){await api(`/api/bots/${id}/toggle`,{method:"POST"}); await loadBots(); await loadDetail();}
+async function testAi(){
+  const box=el("ai-test");
+  box.innerHTML=`<div class="banner">Testing AI (one real OpenRouter call)…</div>`;
+  try{const r=await api("/api/ai/test");
+    if(r.ok){box.innerHTML=`<div class="banner ok"><b>AI works ✓</b> model <span class="tag">${r.model}</span> — ${r.detail}</div>`;}
+    else{box.innerHTML=`<div class="banner warn"><b>AI not working</b> (${r.stage}${r.status?' '+r.status:''}) · model <span class="tag">${r.model||'-'}</span><br>${r.detail}</div>`;}
+  }catch(e){box.innerHTML=`<div class="banner warn">Test failed: ${e.message}</div>`;}
+}
 async function setAiControl(id, on){
   await api(`/api/bots/${id}/config`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ai_control:on})});
   await loadBots(); await loadDetail();
