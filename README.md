@@ -143,7 +143,8 @@ arbitrary logic.
 | Variable | Meaning | Default |
 |---|---|---|
 | `OPENROUTER_API_KEY` | Enables AI strategy translation + reviews | — |
-| `OPENROUTER_MODEL` | Any OpenRouter model slug | `anthropic/claude-3.5-sonnet` |
+| `OPENROUTER_FREE_ONLY` | Only call free (`:free`) models — never spend money | `true` |
+| `OPENROUTER_MODEL` | OpenRouter model slug (`:free` added if free-only) | `meta-llama/llama-3.3-70b-instruct:free` |
 | `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` | Optional; raise data rate limits | — |
 | `TRADE_SYMBOL` | Default symbol for seeded bots | `BTC/USD` |
 | `POLL_INTERVAL_SECONDS` | Seconds between engine cycles | `60` |

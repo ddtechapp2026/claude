@@ -45,6 +45,20 @@ class Settings:
     openrouter_api_key: str
     openrouter_model: str
     openrouter_base_url: str
+    openrouter_free_only: bool  # only ever call free (":free") models
+
+    @property
+    def effective_model(self) -> str:
+        """The model id actually sent to OpenRouter.
+
+        When free-only is on, force the free variant (":free"). If a free
+        variant doesn't exist the request errors and the caller falls back to
+        the rule-based parser, so a paid model is never billed.
+        """
+        m = self.openrouter_model
+        if self.openrouter_free_only and not m.endswith(":free"):
+            m = f"{m}:free"
+        return m
 
     # Learning loop
     ai_review_min_trades: int   # min closed trades before a review runs
@@ -81,8 +95,9 @@ def load_settings() -> Settings:
         dashboard_host=os.getenv("DASHBOARD_HOST", "127.0.0.1").strip(),
         dashboard_port=int(os.getenv("DASHBOARD_PORT", "8000")),
         openrouter_api_key=os.getenv("OPENROUTER_API_KEY", "").strip(),
-        openrouter_model=os.getenv("OPENROUTER_MODEL", "anthropic/claude-3.5-sonnet").strip(),
+        openrouter_model=os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free").strip(),
         openrouter_base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip(),
+        openrouter_free_only=_get_bool("OPENROUTER_FREE_ONLY", True),
         ai_review_min_trades=int(os.getenv("AI_REVIEW_MIN_TRADES", "5")),
         ai_min_winrate=float(os.getenv("AI_MIN_WINRATE", "0.45")),
         fee_pct=float(os.getenv("FEE_PCT", "0.001")),

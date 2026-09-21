@@ -82,7 +82,8 @@ def healthz() -> dict:
 def api_bots() -> JSONResponse:
     bots = [_bot_view(b) for b in _db.list_bots()]
     return JSONResponse({"bots": bots, "ai_enabled": settings.ai_enabled,
-                         "model": settings.openrouter_model,
+                         "model": settings.effective_model,
+                         "free_only": settings.openrouter_free_only,
                          "universe": list(settings.crypto_universe)})
 
 

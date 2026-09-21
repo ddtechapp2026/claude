@@ -51,7 +51,7 @@ def _chat(system: str, user: str, max_tokens: int = 700) -> str | None:
                 "X-Title": "Stonks",
             },
             json={
-                "model": settings.openrouter_model,
+                "model": settings.effective_model,  # forced to ":free" when free-only
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},

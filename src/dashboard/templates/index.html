@@ -234,7 +234,9 @@ async function loadDetail(){
 
 async function loadBots(){
   const d=await api("/api/bots"); bots=d.bots; universe=d.universe||[];
-  el("ai-state").textContent = d.ai_enabled ? `on (${d.model})` : "off — using rule-based parser";
+  el("ai-state").textContent = d.ai_enabled
+    ? `on · ${d.model}${d.free_only ? " · free-only" : ""}`
+    : "off — using rule-based parser";
   if(currentBotId==null && bots.length) currentBotId=bots[0].id;
   renderTabs();
 }
