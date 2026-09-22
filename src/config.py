@@ -95,7 +95,7 @@ def load_settings() -> Settings:
         dashboard_host=os.getenv("DASHBOARD_HOST", "127.0.0.1").strip(),
         dashboard_port=int(os.getenv("DASHBOARD_PORT", "8000")),
         openrouter_api_key=os.getenv("OPENROUTER_API_KEY", "").strip(),
-        openrouter_model=os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free").strip(),
+        openrouter_model=os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat-v3-0324:free").strip(),
         openrouter_base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip(),
         openrouter_free_only=_get_bool("OPENROUTER_FREE_ONLY", True),
         ai_review_min_trades=int(os.getenv("AI_REVIEW_MIN_TRADES", "5")),

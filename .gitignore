@@ -23,3 +23,5 @@ logs/
 .DS_Store
 .idea/
 .vscode/
+.venv*
+*/site-packages/
