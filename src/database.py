@@ -56,6 +56,7 @@ class Database:
                     run_until      TEXT,               -- ISO ts or NULL (forever)
                     auto_adjust    INTEGER NOT NULL DEFAULT 1,
                     ai_control     INTEGER NOT NULL DEFAULT 1,  -- AI manages within guardrails
+                    model          TEXT NOT NULL DEFAULT '',    -- per-bot AI model ('' = global default)
                     status         TEXT NOT NULL DEFAULT 'idle',
                     last_reason    TEXT NOT NULL DEFAULT '',
                     last_cycle     TEXT,
@@ -129,6 +130,7 @@ class Database:
                 "fee_pct": "REAL NOT NULL DEFAULT 0.001",
                 "tax_pct": "REAL NOT NULL DEFAULT 0.30",
                 "ai_control": "INTEGER NOT NULL DEFAULT 1",
+                "model": "TEXT NOT NULL DEFAULT ''",
             })
             self._ensure_columns(conn, "wallets", {
                 "position_symbol": "TEXT",

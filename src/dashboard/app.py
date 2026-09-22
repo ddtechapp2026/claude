@@ -9,10 +9,12 @@ via OpenRouter, with a rule-based fallback). Sits behind nginx Basic Auth.
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -79,9 +81,39 @@ def healthz() -> dict:
 
 
 @app.get("/api/ai/test")
-def api_ai_test() -> JSONResponse:
+def api_ai_test(model: str = "") -> JSONResponse:
     """Make one real OpenRouter call and report the result, for diagnostics."""
-    return JSONResponse(llm.diagnostic())
+    return JSONResponse(llm.diagnostic(model or None))
+
+
+# Live list of free models, cached so the dropdown always shows newly released
+# ":free" models without hammering OpenRouter.
+_models_cache: dict = {"ts": 0.0, "free": []}
+_MODELS_TTL = 600.0  # 10 minutes
+
+
+@app.get("/api/models")
+def api_models(refresh: int = 0) -> JSONResponse:
+    now = time.monotonic()
+    if refresh or not _models_cache["free"] or (now - _models_cache["ts"]) > _MODELS_TTL:
+        try:
+            resp = requests.get(f"{settings.openrouter_base_url}/models", timeout=20)
+            resp.raise_for_status()
+            data = resp.json().get("data", [])
+            free = sorted(
+                m["id"] for m in data
+                if str(m.get("id", "")).endswith(":free")
+                or (str((m.get("pricing") or {}).get("prompt", "1")) in ("0", "0.0")
+                    and str((m.get("pricing") or {}).get("completion", "1")) in ("0", "0.0"))
+            )
+            _models_cache.update(ts=now, free=free)
+            return JSONResponse({"free": free, "cached": False, "count": len(free)})
+        except Exception as exc:  # noqa: BLE001
+            # Fall back to whatever we have cached (may be empty on first failure).
+            return JSONResponse({"free": _models_cache["free"], "cached": True,
+                                 "count": len(_models_cache["free"]), "error": str(exc)})
+    return JSONResponse({"free": _models_cache["free"], "cached": True,
+                         "count": len(_models_cache["free"])})
 
 
 @app.get("/api/bots")
@@ -138,6 +170,7 @@ class ConfigIn(BaseModel):
     run_until: Optional[str] = None            # ISO ts, "" clears it
     auto_adjust: Optional[bool] = None
     ai_control: Optional[bool] = None
+    model: Optional[str] = None                # per-bot AI model ('' = global default)
 
 
 def _norm_pct(v: float | None) -> float | None:
@@ -172,6 +205,8 @@ def api_config(bot_id: int, cfg: ConfigIn) -> JSONResponse:
         fields["auto_adjust"] = 1 if cfg.auto_adjust else 0
     if cfg.ai_control is not None:
         fields["ai_control"] = 1 if cfg.ai_control else 0
+    if cfg.model is not None:
+        fields["model"] = cfg.model.strip()
     _db.update_bot(bot_id, **fields)
     return JSONResponse({"ok": True, "bot": _bot_view(_db.get_bot(bot_id))})
 
@@ -195,7 +230,7 @@ def api_strategy(bot_id: int, body: StrategyIn) -> JSONResponse:
     bot = _db.get_bot(bot_id)
     if not bot:
         raise HTTPException(404, "bot not found")
-    spec, summary, source = llm.translate_strategy(body.text)
+    spec, summary, source = llm.translate_strategy(body.text, model=bot.get("model") or None)
     _db.update_bot(bot_id, strategy_text=body.text, strategy_spec=json.dumps(spec))
     return JSONResponse({"ok": True, "summary": summary, "source": source, "spec": spec})
 

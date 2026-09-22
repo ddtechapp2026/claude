@@ -37,7 +37,16 @@ count. Do not invent other terms or functions. Keep it simple and valid.
 """
 
 
-def _chat(system: str, user: str, max_tokens: int = 700) -> str | None:
+def resolve_model(model: str | None) -> str:
+    """Pick the model to use (per-bot override or global default) and apply the
+    free-only guard so a paid slug is never billed."""
+    m = (model or "").strip() or settings.openrouter_model
+    if settings.openrouter_free_only and not m.endswith(":free"):
+        m = f"{m}:free"
+    return m
+
+
+def _chat(system: str, user: str, max_tokens: int = 700, model: str | None = None) -> str | None:
     if not settings.ai_enabled:
         return None
     try:
@@ -51,7 +60,7 @@ def _chat(system: str, user: str, max_tokens: int = 700) -> str | None:
                 "X-Title": "Stonks",
             },
             json={
-                "model": settings.effective_model,  # forced to ":free" when free-only
+                "model": resolve_model(model),  # per-bot model, forced to ":free"
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -68,14 +77,15 @@ def _chat(system: str, user: str, max_tokens: int = 700) -> str | None:
         return None
 
 
-def diagnostic() -> dict:
+def diagnostic(model: str | None = None) -> dict:
     """Make ONE real OpenRouter call and report exactly what happened.
 
     Unlike _chat this does not swallow errors — it returns the HTTP status and
     body so the dashboard can show why the AI isn't working.
     """
+    m = resolve_model(model)
     if not settings.ai_enabled:
-        return {"ok": False, "stage": "config", "model": settings.effective_model,
+        return {"ok": False, "stage": "config", "model": m,
                 "detail": ("No OpenRouter API key loaded (empty or still the placeholder). "
                            "Add OPENROUTER_API_KEY to .env and restart the services.")}
     try:
@@ -87,19 +97,19 @@ def diagnostic() -> dict:
                 "HTTP-Referer": "https://github.com/ddtechapp2026/claude",
                 "X-Title": "Stonks",
             },
-            json={"model": settings.effective_model,
+            json={"model": m,
                   "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
                   "max_tokens": 8, "temperature": 0},
             timeout=30,
         )
         if resp.status_code != 200:
             return {"ok": False, "stage": "http", "status": resp.status_code,
-                    "model": settings.effective_model, "detail": resp.text[:500]}
+                    "model": m, "detail": resp.text[:500]}
         content = resp.json()["choices"][0]["message"]["content"]
-        return {"ok": True, "status": 200, "model": settings.effective_model,
+        return {"ok": True, "status": 200, "model": m,
                 "detail": f"Model replied: {content.strip()[:120]}"}
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "stage": "exception", "model": settings.effective_model,
+        return {"ok": False, "stage": "exception", "model": m,
                 "detail": str(exc)}
 
 
@@ -119,9 +129,9 @@ def _extract_json(text: str) -> dict:
 # --------------------------------------------------------------------------
 # Plain-English -> spec
 # --------------------------------------------------------------------------
-def translate_strategy(text: str) -> tuple[dict, str, str]:
+def translate_strategy(text: str, model: str | None = None) -> tuple[dict, str, str]:
     """Return (validated_spec, explanation, source) for a plain-English idea."""
-    content = _chat(_SPEC_DOC, f"Trading idea:\n{text}")
+    content = _chat(_SPEC_DOC, f"Trading idea:\n{text}", model=model)
     if content:
         try:
             spec = validate_spec(_extract_json(content))
@@ -228,7 +238,7 @@ def review_trades(bot: dict, closed_trades: list[dict]) -> tuple[dict, str, str]
                 for x in closed_trades[:20]
             ],
         })
-        content = _chat(system, user, max_tokens=400)
+        content = _chat(system, user, max_tokens=400, model=bot.get("model"))
         if content:
             try:
                 data = _extract_json(content)

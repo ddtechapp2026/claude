@@ -82,12 +82,31 @@ const fmtUsd=n=>(n==null)?"-":"$"+Number(n).toLocaleString(undefined,{minimumFra
 const fmtTime=iso=>{try{return new Date(iso).toISOString().replace("T"," ").slice(0,16)}catch{return iso||"-"}};
 const el=id=>document.getElementById(id);
 const pct=n=>(n==null)?"-":(Number(n)*100).toFixed(1)+"%";
-let currentBotId=null, chart=null, bots=[], universe=[];
+let currentBotId=null, chart=null, bots=[], universe=[], freeModels=[], defaultModel="";
 
 function symbolOptions(sel){
   const opts = ['AUTO', ...universe];
   if(sel && !opts.includes(sel)) opts.push(sel);   // keep a custom value visible
   return opts.map(s=>`<option value="${s}" ${s===sel?'selected':''}>${s==='AUTO'?'Auto — pick any crypto':s}</option>`).join("");
+}
+
+function modelOptions(sel){
+  let list=[...freeModels];
+  if(sel && !list.includes(sel)) list.unshift(sel);   // keep current pick visible even if delisted
+  let html=`<option value="" ${sel===""?'selected':''}>Default (${defaultModel||'global'})</option>`;
+  html+=list.map(m=>`<option value="${m}" ${m===sel?'selected':''}>${m}</option>`).join("");
+  return html;
+}
+
+async function loadModels(force){
+  try{const r=await api("/api/models"+(force?"?refresh=1":"")); freeModels=r.free||[];}catch(e){/* keep old */}
+}
+async function testBotModel(){
+  const m=el("f-model").value, box=el("model-test");
+  box.textContent="testing…";
+  try{const r=await api("/api/ai/test"+(m?("?model="+encodeURIComponent(m)):""));
+    box.innerHTML = r.ok ? `<span class="pos">✓ ${r.model} works</span>` : `<span class="neg">✗ ${r.stage||''} ${r.status||''}: ${(r.detail||'').slice(0,140)}</span>`;
+  }catch(e){box.innerHTML=`<span class="neg">✗ ${e.message}</span>`;}
 }
 
 async function api(url,opts){const r=await fetch(url,{cache:"no-store",...opts});
@@ -119,7 +138,7 @@ function detailHTML(d){
 
   <div class="panel">
     <div class="row" style="justify-content:space-between">
-      <div><b>${b.name}</b> <span class="pill">${b.symbol}</span> <span class="pill ${b.ai_control?'ai':''}">AI Control ${b.ai_control?'ON':'OFF'}</span></div>
+      <div><b>${b.name}</b> <span class="pill">${b.symbol}</span> <span class="pill ${b.ai_control?'ai':''}">AI Control ${b.ai_control?'ON':'OFF'}</span> <span class="pill">🧠 ${b.model||'default'}</span></div>
       <div class="row">
         <button class="${b.enabled?'on':'off'}" onclick="toggleBot(${b.id})">${b.enabled?'⏸ Turn OFF':'▶ Turn ON'}</button>
         <a href="/api/bots/${b.id}/export" download style="text-decoration:none"><button>⬇ Export data</button></a>
@@ -178,6 +197,10 @@ function detailHTML(d){
     <div class="formgrid">
       <div><label>Name</label><input id="f-name" value="${b.name}"></div>
       <div><label>Crypto (or Auto = pick any)</label><select id="f-symbol">${symbolOptions(b.symbol)}</select></div>
+      <div><label>AI model (free list, auto-updates)</label>
+        <select id="f-model">${modelOptions(b.model||"")}</select>
+        <div style="margin-top:6px"><button type="button" onclick="testBotModel()" style="padding:4px 10px;font-size:12px">Test this model</button> <span id="model-test" class="muted" style="font-size:12px"></span></div>
+      </div>
       <div><label>Starting cash (USD)</label><input id="f-cash" type="number" value="${b.starting_cash}"></div>
       <div><label>Biggest trade (USD)</label><input id="f-max" type="number" value="${b.max_trade_usd}"></div>
       <div><label>Stop loss (%)</label><input id="f-stop" type="number" step="0.1" value="${(b.stop_loss_pct*100).toFixed(1)}"></div>
@@ -236,7 +259,7 @@ async function loadDetail(){
 }
 
 async function loadBots(){
-  const d=await api("/api/bots"); bots=d.bots; universe=d.universe||[];
+  const d=await api("/api/bots"); bots=d.bots; universe=d.universe||[]; defaultModel=d.model||"";
   el("ai-state").textContent = d.ai_enabled
     ? `on · ${d.model}${d.free_only ? " · free-only" : ""}`
     : "off — using rule-based parser";
@@ -275,6 +298,7 @@ async function saveConfig(id){
     starting_cash:parseFloat(el("f-cash").value),max_trade_usd:parseFloat(el("f-max").value),
     stop_loss_pct:parseFloat(el("f-stop").value),take_profit_pct:parseFloat(el("f-tp").value),
     fee_pct:parseFloat(el("f-fee").value),tax_pct:parseFloat(el("f-tax").value),
+    model:el("f-model").value,
     run_until:until?new Date(until).toISOString():""};
   el("cfg-msg").textContent="Saving…";
   try{await api(`/api/bots/${id}/config`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
@@ -288,8 +312,11 @@ async function tick(){try{await loadBots();
   await loadDetail(); el("updated").textContent=new Date().toLocaleTimeString();
 }catch(e){el("detail").innerHTML=`<div class="banner warn">Dashboard error: ${e.message}</div>`;}}
 
-(async()=>{await loadBots(); await loadDetail(); el("updated").textContent=new Date().toLocaleTimeString();
-  setInterval(tick,10000);})();
+(async()=>{await loadModels(); await loadBots(); await loadDetail();
+  el("updated").textContent=new Date().toLocaleTimeString();
+  setInterval(tick,10000);
+  setInterval(loadModels, 600000);  // refresh the free-model list every 10 min
+})();
 </script>
 </body>
 </html>
