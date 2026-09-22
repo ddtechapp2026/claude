@@ -57,6 +57,7 @@ class Database:
                     auto_adjust    INTEGER NOT NULL DEFAULT 1,
                     ai_control     INTEGER NOT NULL DEFAULT 1,  -- AI manages within guardrails
                     model          TEXT NOT NULL DEFAULT '',    -- per-bot AI model ('' = global default)
+                    live_trading   INTEGER NOT NULL DEFAULT 0,  -- also mirror trades to Alpaca
                     status         TEXT NOT NULL DEFAULT 'idle',
                     last_reason    TEXT NOT NULL DEFAULT '',
                     last_cycle     TEXT,
@@ -89,7 +90,9 @@ class Database:
                     fee            REAL,                -- fee for this execution / round-trip
                     gross_pnl      REAL,               -- SELL: price-only round-trip P&L
                     pnl            REAL,                -- SELL: net round-trip P&L (after fees)
-                    reason         TEXT
+                    reason         TEXT,
+                    broker_order_id TEXT,              -- Alpaca order id when live_trading on
+                    broker_status  TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS equity_snapshots (
@@ -131,6 +134,7 @@ class Database:
                 "tax_pct": "REAL NOT NULL DEFAULT 0.30",
                 "ai_control": "INTEGER NOT NULL DEFAULT 1",
                 "model": "TEXT NOT NULL DEFAULT ''",
+                "live_trading": "INTEGER NOT NULL DEFAULT 0",
             })
             self._ensure_columns(conn, "wallets", {
                 "position_symbol": "TEXT",
@@ -139,6 +143,7 @@ class Database:
             })
             self._ensure_columns(conn, "trades", {
                 "symbol": "TEXT", "fee": "REAL", "gross_pnl": "REAL",
+                "broker_order_id": "TEXT", "broker_status": "TEXT",
             })
             self._ensure_columns(conn, "signals", {"symbol": "TEXT", "context": "TEXT"})
 
@@ -230,12 +235,14 @@ class Database:
 
     # --- events --------------------------------------------------------------
     def record_trade(self, bot_id, symbol, side, qty, price, notional, pnl, reason,
-                     fee=0.0, gross_pnl=None) -> None:
+                     fee=0.0, gross_pnl=None, broker_order_id=None, broker_status=None) -> None:
         with self._conn() as conn:
             conn.execute(
-                """INSERT INTO trades (bot_id,ts,symbol,side,qty,price,notional,fee,gross_pnl,pnl,reason)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                (bot_id, now_iso(), symbol, side, qty, price, notional, fee, gross_pnl, pnl, reason),
+                """INSERT INTO trades (bot_id,ts,symbol,side,qty,price,notional,fee,gross_pnl,pnl,
+                   reason,broker_order_id,broker_status)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (bot_id, now_iso(), symbol, side, qty, price, notional, fee, gross_pnl, pnl, reason,
+                 broker_order_id, broker_status),
             )
 
     def record_equity(self, bot_id, equity) -> None:

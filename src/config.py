@@ -26,6 +26,11 @@ class Settings:
     # Market data (Alpaca crypto data works without keys; keys raise rate limits)
     alpaca_api_key: str
     alpaca_secret_key: str
+    alpaca_paper: bool  # True = paper account (safe); False = live real money
+
+    @property
+    def alpaca_trading_enabled(self) -> bool:
+        return bool(self.alpaca_api_key) and bool(self.alpaca_secret_key)
 
     # Engine
     poll_interval_seconds: int
@@ -81,6 +86,7 @@ def load_settings() -> Settings:
     return Settings(
         alpaca_api_key=os.getenv("ALPACA_API_KEY", "").strip(),
         alpaca_secret_key=os.getenv("ALPACA_SECRET_KEY", "").strip(),
+        alpaca_paper=_get_bool("ALPACA_PAPER", True),
         poll_interval_seconds=int(os.getenv("POLL_INTERVAL_SECONDS", "60")),
         bar_timeframe=os.getenv("BAR_TIMEFRAME", "15Min").strip(),
         lookback_hours=int(os.getenv("LOOKBACK_HOURS", "72")),

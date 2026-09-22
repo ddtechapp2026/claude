@@ -21,7 +21,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-from . import indicators, llm, market, strategy_engine
+from . import broker, indicators, llm, market, strategy_engine
 from .config import settings
 from .database import Database
 from .seed import seed_if_empty
@@ -102,8 +102,10 @@ def _sell(db: Database, bot: dict, wallet: dict, symbol: str, price: float, reas
                      realized_pnl=wallet["realized_pnl"] + net,
                      gross_realized=wallet["gross_realized"] + gross,
                      equity=wallet["cash"] + proceeds - sell_fee)
+    bo = broker.submit_sell(symbol, qty) if bot.get("live_trading") else {}
     db.record_trade(bot["id"], symbol, "SELL", qty, price, proceeds, net, reason,
-                    fee=round_fee, gross_pnl=gross)
+                    fee=round_fee, gross_pnl=gross,
+                    broker_order_id=bo.get("order_id"), broker_status=bo.get("status"))
     log.info("[%s] SELL %s %.6f @ %.2f  gross=%+.2f fee=%.2f net=%+.2f (%s)",
              bot["name"], symbol, qty, price, gross, round_fee, net, reason)
     return net
@@ -121,7 +123,9 @@ def _buy(db: Database, bot: dict, wallet: dict, symbol: str, price: float,
     db.update_wallet(bot["id"], cash=wallet["cash"] - notional - fee, position_qty=qty,
                      position_symbol=symbol, entry_price=price, peak_price=price,
                      equity=wallet["cash"] - fee)  # equity drops by the fee only
-    db.record_trade(bot["id"], symbol, "BUY", qty, price, notional, None, reason, fee=fee)
+    bo = broker.submit_buy(symbol, notional) if bot.get("live_trading") else {}
+    db.record_trade(bot["id"], symbol, "BUY", qty, price, notional, None, reason, fee=fee,
+                    broker_order_id=bo.get("order_id"), broker_status=bo.get("status"))
     log.info("[%s] BUY  %s %.6f @ %.2f  ($%.2f, fee %.2f) (%s)",
              bot["name"], symbol, qty, price, notional, fee, reason)
     return True

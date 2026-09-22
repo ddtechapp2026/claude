@@ -63,6 +63,11 @@
     .switch input:checked + .track{background:var(--accent)}
     .switch input:checked + .track::after{transform:translateX(20px)}
     .aibox{border:1px solid var(--border);border-radius:10px;padding:12px;background:#0d1117;margin-top:12px}
+    .topnav{display:flex;gap:8px;margin-bottom:16px}
+    .navbtn{padding:10px 18px;font-weight:600;font-size:15px}
+    .navbtn.active{background:var(--accent);color:#04101f;border-color:var(--accent)}
+    .live{background:#f8514933;color:var(--red);border:1px solid var(--red)}
+    .bar{height:18px;border-radius:4px;background:var(--accent)}
   </style>
 </head>
 <body>
@@ -74,15 +79,82 @@
   </header>
   <div id="ai-test"></div>
 
-  <div class="tabs" id="tabs"></div>
-  <div id="detail"></div>
+  <div class="topnav">
+    <button id="nav-overview" class="navbtn active" onclick="showView('overview')">📊 Overview</button>
+    <button id="nav-bots" class="navbtn" onclick="showView('bots')">🤖 Bots</button>
+  </div>
+
+  <div id="view-overview"></div>
+
+  <div id="view-bots" style="display:none">
+    <div class="tabs" id="tabs"></div>
+    <div id="detail"></div>
+  </div>
 
 <script>
 const fmtUsd=n=>(n==null)?"-":"$"+Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const fmtTime=iso=>{try{return new Date(iso).toISOString().replace("T"," ").slice(0,16)}catch{return iso||"-"}};
 const el=id=>document.getElementById(id);
 const pct=n=>(n==null)?"-":(Number(n)*100).toFixed(1)+"%";
-let currentBotId=null, chart=null, bots=[], universe=[], freeModels=[], defaultModel="";
+let currentBotId=null, chart=null, ovChart=null, bots=[], universe=[], freeModels=[], defaultModel="";
+let currentView="overview", alpacaEnabled=false, alpacaPaper=true;
+
+function showView(v){
+  currentView=v;
+  el("view-overview").style.display = v==="overview" ? "" : "none";
+  el("view-bots").style.display = v==="bots" ? "" : "none";
+  el("nav-overview").classList.toggle("active", v==="overview");
+  el("nav-bots").classList.toggle("active", v==="bots");
+  if(v==="overview") loadOverview(); else loadDetail();
+}
+
+async function loadOverview(){
+  try{
+    const d=await api("/api/overview"); const t=d.totals;
+    const money=(n)=>`<span class="${n>=0?'pos':'neg'}">${fmtUsd(n)}</span>`;
+    const cards=[
+      ["Total equity", fmtUsd(t.equity)],
+      ["Total P/L (all-in)", `${money(t.total_pnl)}`],
+      ["Net realized", money(t.net_realized)],
+      ["Unrealized", money(t.unrealized)],
+      ["Fees paid", `<span class="neg">${fmtUsd(t.fees)}</span>`],
+      ["Est. taxes", `<span class="neg">${fmtUsd(t.est_tax)}</span>`],
+      ["Bots running", `${t.running}/${t.bots}${t.live?` · <span class="neg">${t.live} LIVE</span>`:''}`],
+      ["Win rate", `${t.win_rate.toFixed(0)}% <span class="muted" style="font-size:13px">(${t.wins}/${t.closed_trades})</span>`],
+    ];
+    const maxAbs=Math.max(1,...d.ranking.map(r=>Math.abs(r.total_pnl)));
+    const rows=d.ranking.map(r=>{
+      const w=Math.round(Math.abs(r.total_pnl)/maxAbs*100);
+      const col=r.total_pnl>=0?'var(--green)':'var(--red)';
+      return `<tr>
+        <td><a href="#" onclick="openBot(${r.id});return false" style="color:var(--accent);text-decoration:none">${r.name}</a>
+          ${r.live_trading?'<span class="pill live">LIVE</span>':''} ${r.enabled?'':'<span class="pill">off</span>'}</td>
+        <td><span class="tag">${r.symbol}</span></td>
+        <td class="right ${r.total_pnl>=0?'pos':'neg'}">${fmtUsd(r.total_pnl)}</td>
+        <td class="right ${r.pnl>=0?'pos':'neg'}">${r.pnl>=0?'+':''}${r.pnl_pct.toFixed(1)}%</td>
+        <td style="width:40%"><div class="bar" style="width:${w}%;background:${col}"></div></td></tr>`;
+    }).join("");
+    el("view-overview").innerHTML=`
+      <div class="grid">${cards.map(([l,v])=>`<div class="card"><div class="label">${l}</div><div class="value">${v}</div></div>`).join("")}</div>
+      <div class="panel"><h2>P&L breakdown (all bots)</h2>
+        <table style="max-width:520px"><tbody>
+          <tr><td>Gross trading P/L</td><td class="right ${t.gross_realized>=0?'pos':'neg'}">${fmtUsd(t.gross_realized)}</td></tr>
+          <tr><td>− Fees</td><td class="right neg">−${fmtUsd(t.fees)}</td></tr>
+          <tr><td>− Est. taxes</td><td class="right neg">−${fmtUsd(t.est_tax)}</td></tr>
+          <tr><td><b>= Net realized</b></td><td class="right ${t.net_realized>=0?'pos':'neg'}"><b>${fmtUsd(t.net_realized)}</b></td></tr>
+          <tr><td>Unrealized (open)</td><td class="right ${t.unrealized>=0?'pos':'neg'}">${fmtUsd(t.unrealized)}</td></tr>
+          <tr style="border-top:2px solid var(--border)"><td><b>Total P/L</b></td><td class="right ${t.total_pnl>=0?'pos':'neg'}"><b>${fmtUsd(t.total_pnl)}</b></td></tr>
+        </tbody></table>
+      </div>
+      <div class="panel overflow"><h2>Bots ranked by P/L</h2>
+        <table><thead><tr><th>Bot</th><th>Symbol</th><th class="right">Total P/L</th><th class="right">%</th><th></th></tr></thead>
+        <tbody>${rows||'<tr><td colspan="5" class="muted">No bots.</td></tr>'}</tbody></table>
+      </div>`;
+    el("updated").textContent=new Date().toLocaleTimeString();
+  }catch(e){el("view-overview").innerHTML=`<div class="banner warn">Could not load overview: ${e.message}</div>`;}
+}
+
+function openBot(id){currentBotId=id; showView('bots'); renderTabs();}
 
 function symbolOptions(sel){
   const opts = ['AUTO', ...universe];
@@ -138,7 +210,7 @@ function detailHTML(d){
 
   <div class="panel">
     <div class="row" style="justify-content:space-between">
-      <div><b>${b.name}</b> <span class="pill">${b.symbol}</span> <span class="pill ${b.ai_control?'ai':''}">AI Control ${b.ai_control?'ON':'OFF'}</span> <span class="pill">🧠 ${b.model||'default'}</span></div>
+      <div><b>${b.name}</b> <span class="pill">${b.symbol}</span> <span class="pill ${b.ai_control?'ai':''}">AI Control ${b.ai_control?'ON':'OFF'}</span> <span class="pill">🧠 ${b.model||'default'}</span> ${b.live_trading?'<span class="pill live">● LIVE Alpaca</span>':'<span class="pill">simulated</span>'}</div>
       <div class="row">
         <button class="${b.enabled?'on':'off'}" onclick="toggleBot(${b.id})">${b.enabled?'⏸ Turn OFF':'▶ Turn ON'}</button>
         <a href="/api/bots/${b.id}/export" download style="text-decoration:none"><button>⬇ Export data</button></a>
@@ -153,6 +225,16 @@ function detailHTML(d){
         ${b.ai_control
           ? '<b style="color:var(--accent)">ON:</b> the bot follows its own strategy and actively manages the trade — trailing the stop and moving it to break-even, and tuning position size as it learns. Your stop-loss and take-profit are <b>hard guardrails it can only tighten within, never exceed</b>.'
           : '<b>OFF:</b> your controls are the answer. Fixed stop-loss and take-profit exactly as set, strategy entry/exit as written. <b>No dynamic adjustments and no learning.</b>'}
+      </div>
+    </div>
+    <div class="aibox">
+      <label class="switch"><input type="checkbox" ${b.live_trading?'checked':''} onchange="setLiveTrading(${b.id}, this.checked)">
+        <span class="track"></span><b>Trade on Alpaca (live)</b></label>
+      <div class="muted" style="margin-top:8px;font-size:13px">
+        ${b.live_trading
+          ? `<b class="neg">ON:</b> this bot ALSO sends real orders to your Alpaca ${alpacaPaper?'<b>paper</b>':'<b class="neg">LIVE (real money!)</b>'} account, mirroring each simulated buy/sell. ${alpacaEnabled?'':'<b class="neg">But no Alpaca keys are set</b> — add ALPACA_API_KEY/SECRET to .env, orders will not fire until then.'}`
+          : '<b>OFF:</b> simulated only (virtual wallet) — exactly what it does now. No real orders.'}
+        <br><span style="font-size:12px">⚠️ Alpaca is one account: enabling several live bots makes them share one balance/position and interfere. Prefer one live bot at a time.</span>
       </div>
     </div>
   </div>
@@ -215,13 +297,14 @@ function detailHTML(d){
   </div>
 
   <div class="panel overflow"><h2>Recent trades</h2>
-    <table><thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th class="right">Qty</th><th class="right">Price</th><th class="right">Notional</th><th class="right">Fee</th><th class="right">Net P/L</th><th>Reason</th></tr></thead>
+    <table><thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th class="right">Qty</th><th class="right">Price</th><th class="right">Notional</th><th class="right">Fee</th><th class="right">Net P/L</th><th>Reason</th><th>Alpaca</th></tr></thead>
     <tbody>${(d.trades||[]).map(t=>`<tr><td>${fmtTime(t.ts)}</td><td><span class="tag">${t.symbol||'-'}</span></td><td><span class="tag ${t.side}">${t.side}</span></td>
       <td class="right">${t.qty?Number(t.qty).toFixed(6):'-'}</td><td class="right">${fmtUsd(t.price)}</td>
       <td class="right">${t.notional?fmtUsd(t.notional):'-'}</td>
       <td class="right muted">${t.fee!=null?fmtUsd(t.fee):'-'}</td>
       <td class="right ${((t.pnl||0)>=0)?'pos':'neg'}">${t.pnl!=null?fmtUsd(t.pnl):'-'}</td>
-      <td class="muted">${t.reason||''}</td></tr>`).join("")||`<tr><td colspan="9" class="muted">No trades yet.</td></tr>`}</tbody></table>
+      <td class="muted">${t.reason||''}</td>
+      <td class="muted" style="font-size:12px">${t.broker_status?('<span class="tag">'+t.broker_status+'</span>'):''}</td></tr>`).join("")||`<tr><td colspan="10" class="muted">No trades yet.</td></tr>`}</tbody></table>
   </div>
 
   <div class="panel overflow"><h2>AI learning log</h2>
@@ -260,6 +343,7 @@ async function loadDetail(){
 
 async function loadBots(){
   const d=await api("/api/bots"); bots=d.bots; universe=d.universe||[]; defaultModel=d.model||"";
+  alpacaEnabled=!!d.alpaca_enabled; alpacaPaper=d.alpaca_paper!==false;
   el("ai-state").textContent = d.ai_enabled
     ? `on · ${d.model}${d.free_only ? " · free-only" : ""}`
     : "off — using rule-based parser";
@@ -278,6 +362,16 @@ async function testAi(){
 }
 async function setAiControl(id, on){
   await api(`/api/bots/${id}/config`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ai_control:on})});
+  await loadBots(); await loadDetail();
+}
+async function setLiveTrading(id, on){
+  if(on){
+    let msg = alpacaEnabled
+      ? `Turn ON live Alpaca trading for this bot? It will place REAL orders on your ${alpacaPaper?'paper':'LIVE real-money'} account.`
+      : "Turn this on? No Alpaca keys are set yet, so no orders will fire until you add them to .env.";
+    if(!confirm(msg)){ await loadDetail(); return; }
+  }
+  await api(`/api/bots/${id}/config`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({live_trading:on})});
   await loadBots(); await loadDetail();
 }
 async function resetBot(id){if(!confirm("Reset this bot's wallet and clear its history?"))return;
@@ -307,12 +401,13 @@ async function saveConfig(id){
 }
 
 async function tick(){try{await loadBots();
-  // only auto-refresh detail if the user isn't typing in a field
+  // don't clobber a field the user is editing
   if(document.activeElement && ["INPUT","TEXTAREA","SELECT"].includes(document.activeElement.tagName)) return;
-  await loadDetail(); el("updated").textContent=new Date().toLocaleTimeString();
-}catch(e){el("detail").innerHTML=`<div class="banner warn">Dashboard error: ${e.message}</div>`;}}
+  if(currentView==="overview") await loadOverview(); else await loadDetail();
+  el("updated").textContent=new Date().toLocaleTimeString();
+}catch(e){/* transient */}}
 
-(async()=>{await loadModels(); await loadBots(); await loadDetail();
+(async()=>{await loadModels(); await loadBots(); await loadOverview();
   el("updated").textContent=new Date().toLocaleTimeString();
   setInterval(tick,10000);
   setInterval(loadModels, 600000);  // refresh the free-model list every 10 min

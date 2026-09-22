@@ -122,7 +122,54 @@ def api_bots() -> JSONResponse:
     return JSONResponse({"bots": bots, "ai_enabled": settings.ai_enabled,
                          "model": settings.effective_model,
                          "free_only": settings.openrouter_free_only,
-                         "universe": list(settings.crypto_universe)})
+                         "universe": list(settings.crypto_universe),
+                         "alpaca_enabled": settings.alpaca_trading_enabled,
+                         "alpaca_paper": settings.alpaca_paper})
+
+
+@app.get("/api/overview")
+def api_overview() -> JSONResponse:
+    """Portfolio-wide totals and per-bot ranking for the Overview tab."""
+    bots = [_bot_view(b) for b in _db.list_bots()]
+    agg = {"gross_realized": 0.0, "fees": 0.0, "est_tax": 0.0,
+           "net_realized": 0.0, "unrealized": 0.0, "total_pnl": 0.0}
+    total_equity = total_start = 0.0
+    running = live = 0
+    wins = losses = 0
+    for b in bots:
+        c = b["costs"]
+        for k in agg:
+            agg[k] += c.get(k, 0.0)
+        total_equity += b["equity"]
+        total_start += b["starting_cash"]
+        running += 1 if b["enabled"] else 0
+        live += 1 if b.get("live_trading") else 0
+        for t in _db.closed_trades(b["id"], limit=100000):
+            if (t.get("pnl") or 0) > 0:
+                wins += 1
+            elif (t.get("pnl") or 0) < 0:
+                losses += 1
+    ranking = sorted(
+        ({"id": b["id"], "name": b["name"], "symbol": b["symbol"],
+          "enabled": b["enabled"], "live_trading": b.get("live_trading", 0),
+          "equity": b["equity"], "pnl": b["pnl"], "pnl_pct": b["pnl_pct"],
+          "total_pnl": b["costs"]["total_pnl"]} for b in bots),
+        key=lambda x: x["total_pnl"], reverse=True)
+    closed = wins + losses
+    return JSONResponse({
+        "totals": {
+            "equity": total_equity, "starting": total_start,
+            "pnl": total_equity - total_start,
+            "pnl_pct": ((total_equity - total_start) / total_start * 100) if total_start else 0.0,
+            **agg,
+            "bots": len(bots), "running": running, "live": live,
+            "closed_trades": closed, "wins": wins,
+            "win_rate": (wins / closed * 100) if closed else 0.0,
+        },
+        "ranking": ranking,
+        "alpaca_enabled": settings.alpaca_trading_enabled,
+        "alpaca_paper": settings.alpaca_paper,
+    })
 
 
 @app.get("/api/bots/{bot_id}/export")
@@ -171,6 +218,7 @@ class ConfigIn(BaseModel):
     auto_adjust: Optional[bool] = None
     ai_control: Optional[bool] = None
     model: Optional[str] = None                # per-bot AI model ('' = global default)
+    live_trading: Optional[bool] = None        # also send real orders to Alpaca
 
 
 def _norm_pct(v: float | None) -> float | None:
@@ -207,6 +255,8 @@ def api_config(bot_id: int, cfg: ConfigIn) -> JSONResponse:
         fields["ai_control"] = 1 if cfg.ai_control else 0
     if cfg.model is not None:
         fields["model"] = cfg.model.strip()
+    if cfg.live_trading is not None:
+        fields["live_trading"] = 1 if cfg.live_trading else 0
     _db.update_bot(bot_id, **fields)
     return JSONResponse({"ok": True, "bot": _bot_view(_db.get_bot(bot_id))})
 
