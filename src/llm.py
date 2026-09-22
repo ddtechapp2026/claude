@@ -71,10 +71,36 @@ def _chat(system: str, user: str, max_tokens: int = 700, model: str | None = Non
             timeout=45,
         )
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        content, err = _content_from_response(resp.json())
+        if err:
+            log.warning("OpenRouter returned no usable content: %s", err)
+            return None
+        return content
     except Exception as exc:  # noqa: BLE001 - fall back to rules
         log.warning("OpenRouter call failed (%s); using rule-based fallback", exc)
         return None
+
+
+def _content_from_response(data: dict) -> tuple[str | None, str | None]:
+    """Pull the assistant text out of an OpenRouter response.
+
+    Returns (content, error_detail). Handles error objects returned inside a
+    200, missing 'choices', and reasoning-only models (content in 'reasoning').
+    """
+    if not isinstance(data, dict):
+        return None, f"unexpected response type: {type(data).__name__}"
+    if data.get("error"):
+        err = data["error"]
+        msg = err.get("message") if isinstance(err, dict) else str(err)
+        return None, f"provider error: {msg}"
+    choices = data.get("choices")
+    if not choices:
+        return None, f"no 'choices' in response: {json.dumps(data)[:300]}"
+    msg = (choices[0] or {}).get("message", {}) or {}
+    content = msg.get("content") or msg.get("reasoning")
+    if not content:
+        return None, "empty content (model returned no text)"
+    return content, None
 
 
 def diagnostic(model: str | None = None) -> dict:
@@ -105,7 +131,10 @@ def diagnostic(model: str | None = None) -> dict:
         if resp.status_code != 200:
             return {"ok": False, "stage": "http", "status": resp.status_code,
                     "model": m, "detail": resp.text[:500]}
-        content = resp.json()["choices"][0]["message"]["content"]
+        content, err = _content_from_response(resp.json())
+        if err:
+            return {"ok": False, "stage": "bad-response", "status": 200,
+                    "model": m, "detail": err}
         return {"ok": True, "status": 200, "model": m,
                 "detail": f"Model replied: {content.strip()[:120]}"}
     except Exception as exc:  # noqa: BLE001
