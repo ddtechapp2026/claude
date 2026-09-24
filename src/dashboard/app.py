@@ -21,7 +21,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from starlette.requests import Request
 
-from .. import llm, strategy_engine
+from .. import backtest, llm, market, strategy_engine
 from ..config import settings
 from ..database import Database
 
@@ -293,6 +293,54 @@ def api_reset(bot_id: int) -> JSONResponse:
     _db.update_bot(bot_id, enabled=0, status="idle", last_reason="reset")
     _db.reset_wallet(bot_id, bot["starting_cash"])
     return JSONResponse({"ok": True})
+
+
+class BacktestIn(BaseModel):
+    symbol: str = "BTC/USD"
+    strategy_text: Optional[str] = None   # plain English -> spec (if no from_bot)
+    from_bot: Optional[int] = None        # copy an existing bot's strategy
+    days: float = 30
+    starting_cash: float = 10000
+    max_trade_usd: float = 1000
+    stop_loss_pct: float = 5              # percent
+    take_profit_pct: float = 10           # percent
+    fee_pct: float = 0.1                  # percent
+    size_fraction: float = 50            # percent of cash per buy
+    ai_control: bool = True
+    model: Optional[str] = None
+
+
+@app.post("/api/backtest")
+def api_backtest(body: BacktestIn) -> JSONResponse:
+    # Resolve the strategy spec.
+    source = "spec"
+    summary = ""
+    if body.from_bot:
+        bot = _db.get_bot(body.from_bot)
+        if not bot:
+            raise HTTPException(404, "bot not found")
+        spec = strategy_engine.validate_spec(json.loads(bot["strategy_spec"] or "{}"))
+    elif body.strategy_text:
+        spec, summary, source = llm.translate_strategy(body.strategy_text, model=body.model)
+    else:
+        raise HTTPException(400, "provide strategy_text or from_bot")
+
+    try:
+        bars = market.get_bars(body.symbol, body.days)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"could not fetch history: {exc}"}, status_code=200)
+
+    result = backtest.run_backtest(
+        bars, spec=spec,
+        starting_cash=body.starting_cash, max_trade_usd=body.max_trade_usd,
+        stop_pct=body.stop_loss_pct / 100.0, tp_pct=body.take_profit_pct / 100.0,
+        fee_pct=body.fee_pct / 100.0, size_fraction=body.size_fraction / 100.0,
+        ai_control=body.ai_control,
+    )
+    result["spec_summary"] = strategy_engine.describe(spec)
+    result["source"] = source
+    result["timeframe"] = market.timeframe_for_days(body.days)
+    return JSONResponse(result)
 
 
 @app.get("/")

@@ -82,6 +82,7 @@
   <div class="topnav">
     <button id="nav-overview" class="navbtn active" onclick="showView('overview')">📊 Overview</button>
     <button id="nav-bots" class="navbtn" onclick="showView('bots')">🤖 Bots</button>
+    <button id="nav-backtest" class="navbtn" onclick="showView('backtest')">🧪 Backtest</button>
   </div>
 
   <div id="view-overview"></div>
@@ -90,6 +91,8 @@
     <div class="tabs" id="tabs"></div>
     <div id="detail"></div>
   </div>
+
+  <div id="view-backtest" style="display:none"></div>
 
 <script>
 const fmtUsd=n=>(n==null)?"-":"$"+Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -103,9 +106,109 @@ function showView(v){
   currentView=v;
   el("view-overview").style.display = v==="overview" ? "" : "none";
   el("view-bots").style.display = v==="bots" ? "" : "none";
+  el("view-backtest").style.display = v==="backtest" ? "" : "none";
   el("nav-overview").classList.toggle("active", v==="overview");
   el("nav-bots").classList.toggle("active", v==="bots");
-  if(v==="overview") loadOverview(); else loadDetail();
+  el("nav-backtest").classList.toggle("active", v==="backtest");
+  if(v==="overview") loadOverview();
+  else if(v==="backtest") renderBacktestForm();
+  else loadDetail();
+}
+
+let btChart=null;
+function botCopyOptions(){
+  return '<option value="">— none —</option>'+bots.map(b=>`<option value="${b.id}">${b.name} (${b.symbol})</option>`).join("");
+}
+function renderBacktestForm(){
+  if(el("view-backtest").dataset.built) return;   // build once; keep results
+  el("view-backtest").dataset.built="1";
+  el("view-backtest").innerHTML=`
+  <div class="panel">
+    <h2>Backtest a strategy <span class="muted" style="text-transform:none">— replay it over past data, no bots touched</span></h2>
+    <div class="formgrid">
+      <div><label>Copy settings from a bot (optional)</label><select id="bt-frombot" onchange="btPrefill()">${botCopyOptions()}</select></div>
+      <div><label>Crypto</label><select id="bt-symbol">${symbolOptions('BTC/USD').replace('Auto — pick any crypto','(pick a crypto)')}</select></div>
+      <div><label>History length</label><select id="bt-days">
+        <option value="3">3 days (15-min bars)</option>
+        <option value="7">1 week (15-min)</option>
+        <option value="30" selected>1 month (hourly)</option>
+        <option value="90">3 months (daily)</option>
+        <option value="180">6 months (daily)</option>
+        <option value="365">1 year (daily)</option>
+      </select></div>
+      <div><label>Starting cash (USD)</label><input id="bt-cash" type="number" value="10000"></div>
+      <div><label>Biggest trade (USD)</label><input id="bt-max" type="number" value="1000"></div>
+      <div><label>Size per buy (% of cash)</label><input id="bt-size" type="number" value="50"></div>
+      <div><label>Stop loss (%)</label><input id="bt-stop" type="number" step="0.1" value="5"></div>
+      <div><label>Take profit (%)</label><input id="bt-tp" type="number" step="0.1" value="10"></div>
+      <div><label>Fee per side (%)</label><input id="bt-fee" type="number" step="0.01" value="0.1"></div>
+      <div><label>AI Control (trailing/break-even)</label><select id="bt-ai"><option value="1" selected>On</option><option value="0">Off</option></select></div>
+    </div>
+    <label>Strategy in plain English (ignored if you copied from a bot)</label>
+    <textarea id="bt-text" placeholder="e.g. Buy when RSI drops below 30, sell when it rises above 70. Use 50% of cash.">buy when the 10-period average crosses above the 30, sell when it crosses back below</textarea>
+    <div class="row" style="margin-top:10px">
+      <button class="primary" onclick="runBacktest()">▶ Run backtest</button>
+      <span id="bt-msg" class="muted"></span>
+    </div>
+  </div>
+  <div id="bt-results"></div>`;
+}
+function btPrefill(){
+  const id=parseInt(el("bt-frombot").value); if(!id)return;
+  const b=bots.find(x=>x.id===id); if(!b)return;
+  el("bt-symbol").innerHTML=symbolOptions(b.symbol);
+  el("bt-max").value=b.max_trade_usd; el("bt-stop").value=(b.stop_loss_pct*100).toFixed(1);
+  el("bt-tp").value=(b.take_profit_pct*100).toFixed(1); el("bt-fee").value=(b.fee_pct*100).toFixed(2);
+  el("bt-ai").value=b.ai_control?"1":"0"; el("bt-cash").value=b.starting_cash;
+  el("bt-text").value=b.strategy_text||"";
+}
+async function runBacktest(){
+  const body={
+    symbol:el("bt-symbol").value, days:parseFloat(el("bt-days").value),
+    from_bot: parseInt(el("bt-frombot").value)||null,
+    strategy_text: el("bt-text").value,
+    starting_cash:parseFloat(el("bt-cash").value), max_trade_usd:parseFloat(el("bt-max").value),
+    size_fraction:parseFloat(el("bt-size").value), stop_loss_pct:parseFloat(el("bt-stop").value),
+    take_profit_pct:parseFloat(el("bt-tp").value), fee_pct:parseFloat(el("bt-fee").value),
+    ai_control: el("bt-ai").value==="1"};
+  el("bt-msg").textContent="Running… (fetching history + replaying)";
+  try{
+    const r=await api("/api/backtest",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    el("bt-msg").textContent="";
+    if(r.error){el("bt-results").innerHTML=`<div class="banner warn">${r.error}</div>`;return;}
+    renderBacktestResult(r);
+  }catch(e){el("bt-msg").textContent=""; el("bt-results").innerHTML=`<div class="banner warn">Failed: ${e.message}</div>`;}
+}
+function renderBacktestResult(r){
+  const s=r.stats; const beat=s.return_pct>=s.buy_hold_return_pct;
+  const cards=[
+    ["Return", `<span class="${s.return_pct>=0?'pos':'neg'}">${s.return_pct>=0?'+':''}${s.return_pct}%</span>`],
+    ["Net P/L", `<span class="${s.net_pnl>=0?'pos':'neg'}">${fmtUsd(s.net_pnl)}</span>`],
+    ["Final equity", fmtUsd(s.final_equity)],
+    ["Buy &amp; hold", `<span class="${s.buy_hold_return_pct>=0?'pos':'neg'}">${s.buy_hold_return_pct>=0?'+':''}${s.buy_hold_return_pct}%</span> ${beat?'<span class="pill ai">beat</span>':'<span class="pill">under</span>'}`],
+    ["Trades", `${s.num_trades}`],
+    ["Win rate", `${s.win_rate}% <span class="muted" style="font-size:13px">(${s.wins}/${s.num_trades})</span>`],
+    ["Max drawdown", `<span class="neg">-${s.max_drawdown_pct}%</span>`],
+    ["Fees paid", `<span class="neg">${fmtUsd(s.fees_paid)}</span>`],
+  ];
+  el("bt-results").innerHTML=`
+    <div class="panel"><div class="muted" style="font-size:13px">Strategy (${r.source}): ${r.spec_summary}<br>
+      ${s.bars} ${r.timeframe} bars · ${fmtTime(s.from)} → ${fmtTime(s.to)}</div></div>
+    <div class="grid">${cards.map(([l,v])=>`<div class="card"><div class="label">${l}</div><div class="value">${v}</div></div>`).join("")}</div>
+    <div class="panel"><h2>Equity curve (backtest)</h2><canvas id="btChart" style="max-height:280px"></canvas></div>
+    <div class="panel overflow"><h2>Simulated trades</h2>
+      <table><thead><tr><th>Time</th><th>Side</th><th class="right">Price</th><th class="right">Qty</th><th class="right">Net P/L</th><th>Reason</th></tr></thead>
+      <tbody>${(r.trades||[]).map(t=>`<tr><td>${fmtTime(t.t)}</td><td><span class="tag ${t.side}">${t.side}</span></td>
+        <td class="right">${fmtUsd(t.price)}</td><td class="right">${Number(t.qty).toFixed(6)}</td>
+        <td class="right ${(t.pnl==null)?'':(t.pnl>=0?'pos':'neg')}">${t.pnl!=null?fmtUsd(t.pnl):'-'}</td>
+        <td class="muted">${t.reason||''}</td></tr>`).join("")||'<tr><td colspan="6" class="muted">No trades in this window.</td></tr>'}</tbody></table>
+    </div>`;
+  const curve=r.equity_curve||[];
+  if(btChart) btChart.destroy();
+  btChart=new Chart(el("btChart"),{type:"line",data:{labels:curve.map(p=>fmtTime(p.t).slice(0,10)),
+    datasets:[{data:curve.map(p=>p.equity),borderColor:"#58a6ff",backgroundColor:"rgba(88,166,255,0.12)",fill:true,tension:.2,pointRadius:0,borderWidth:2}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+    scales:{x:{ticks:{color:"#8b949e",maxTicksLimit:8},grid:{color:"#21262d"}},y:{ticks:{color:"#8b949e"},grid:{color:"#21262d"}}}}});
 }
 
 async function loadOverview(){
@@ -403,7 +506,9 @@ async function saveConfig(id){
 async function tick(){try{await loadBots();
   // don't clobber a field the user is editing
   if(document.activeElement && ["INPUT","TEXTAREA","SELECT"].includes(document.activeElement.tagName)) return;
-  if(currentView==="overview") await loadOverview(); else await loadDetail();
+  if(currentView==="overview") await loadOverview();
+  else if(currentView==="bots") await loadDetail();
+  // backtest view is left alone (don't clobber the form/results)
   el("updated").textContent=new Date().toLocaleTimeString();
 }catch(e){/* transient */}}
 

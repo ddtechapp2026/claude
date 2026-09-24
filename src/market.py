@@ -52,3 +52,27 @@ def get_closes(symbol: str) -> list[float]:
 def get_price(symbol: str) -> float | None:
     closes = get_closes(symbol)
     return closes[-1] if closes else None
+
+
+# Auto-pick a timeframe that keeps the bar count reasonable for a given window.
+def timeframe_for_days(days: float) -> str:
+    if days <= 5:
+        return "15Min"
+    if days <= 30:
+        return "1Hour"
+    return "1Day"
+
+
+def get_bars(symbol: str, days: float, timeframe: str | None = None) -> list[dict]:
+    """Historical bars for backtesting: [{'t': iso, 'c': close}, ...] oldest first.
+
+    Not cached (each backtest window differs) and returns timestamps for the
+    equity-curve x-axis.
+    """
+    tf_name = timeframe or timeframe_for_days(days)
+    tf = _TIMEFRAMES.get(tf_name, _TIMEFRAMES["1Hour"])
+    start = datetime.now(timezone.utc) - timedelta(days=days)
+    request = CryptoBarsRequest(symbol_or_symbols=[symbol], timeframe=tf, start=start)
+    bars = _client.get_crypto_bars(request)
+    series = bars.data.get(symbol, [])
+    return [{"t": b.timestamp.isoformat(), "c": float(b.close)} for b in series]
