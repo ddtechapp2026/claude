@@ -127,7 +127,7 @@ function renderBacktestForm(){
     <h2>Backtest a strategy <span class="muted" style="text-transform:none">— replay it over past data, no bots touched</span></h2>
     <div class="formgrid">
       <div><label>Copy settings from a bot (optional)</label><select id="bt-frombot" onchange="btPrefill()">${botCopyOptions()}</select></div>
-      <div><label>Crypto</label><select id="bt-symbol">${symbolOptions('BTC/USD').replace('Auto — pick any crypto','(pick a crypto)')}</select></div>
+      <div><label>Crypto</label><select id="bt-symbol">${backtestSymbolOptions('BTC/USD')}</select></div>
       <div><label>History length</label><select id="bt-days">
         <option value="1">1 day</option>
         <option value="3">3 days</option>
@@ -165,7 +165,7 @@ function renderBacktestForm(){
 function btPrefill(){
   const id=parseInt(el("bt-frombot").value); if(!id)return;
   const b=bots.find(x=>x.id===id); if(!b)return;
-  el("bt-symbol").innerHTML=symbolOptions(b.symbol);
+  el("bt-symbol").innerHTML=backtestSymbolOptions(b.symbol);  // AUTO bots -> a real coin
   el("bt-max").value=b.max_trade_usd; el("bt-stop").value=(b.stop_loss_pct*100).toFixed(1);
   el("bt-tp").value=(b.take_profit_pct*100).toFixed(1); el("bt-fee").value=(b.fee_pct*100).toFixed(2);
   el("bt-ai").value=b.ai_control?"1":"0"; el("bt-cash").value=b.starting_cash;
@@ -274,6 +274,13 @@ function symbolOptions(sel){
   const opts = ['AUTO', ...universe];
   if(sel && !opts.includes(sel)) opts.push(sel);   // keep a custom value visible
   return opts.map(s=>`<option value="${s}" ${s===sel?'selected':''}>${s==='AUTO'?'Auto — pick any crypto':s}</option>`).join("");
+}
+
+function backtestSymbolOptions(sel){
+  // Backtests need a concrete coin — never "AUTO".
+  const list = universe.length ? universe : ['BTC/USD'];
+  if(!sel || sel.toUpperCase()==='AUTO' || !list.includes(sel)) sel = list[0];
+  return list.map(s=>`<option value="${s}" ${s===sel?'selected':''}>${s}</option>`).join("");
 }
 
 function modelOptions(sel){

@@ -326,6 +326,11 @@ def api_backtest(body: BacktestIn) -> JSONResponse:
     else:
         raise HTTPException(400, "provide strategy_text or from_bot")
 
+    # A backtest needs a concrete coin, never "AUTO".
+    symbol = (body.symbol or "").strip()
+    if symbol.upper() == "AUTO" or "/" not in symbol:
+        symbol = settings.crypto_universe[0] if settings.crypto_universe else "BTC/USD"
+
     # Resolve timeframe (finest available is 1-minute) and cap the window so a
     # fine granularity can't fetch a runaway number of bars.
     tf = body.timeframe if body.timeframe in market.TIMEFRAMES else market.timeframe_for_days(body.days)
@@ -336,7 +341,7 @@ def api_backtest(body: BacktestIn) -> JSONResponse:
                 f"{body.days:g} days is too many to fetch/replay. Use a coarser timeframe "
                 f"for a longer window.")
     try:
-        bars = market.get_bars(body.symbol, eff_days, timeframe=tf)
+        bars = market.get_bars(symbol, eff_days, timeframe=tf)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"error": f"could not fetch history: {exc}"}, status_code=200)
 
