@@ -54,13 +54,29 @@ def get_price(symbol: str) -> float | None:
     return closes[-1] if closes else None
 
 
+TIMEFRAMES = ("1Min", "5Min", "15Min", "1Hour", "1Day")
+
+# Largest window (days) we'll fetch per timeframe, to keep the bar count (and the
+# backtest's runtime) sane. 1-minute is the finest Alpaca offers for crypto.
+_MAX_DAYS = {"1Min": 5, "5Min": 30, "15Min": 120, "1Hour": 400, "1Day": 3650}
+
+
 # Auto-pick a timeframe that keeps the bar count reasonable for a given window.
 def timeframe_for_days(days: float) -> str:
+    if days <= 2:
+        return "1Min"
     if days <= 5:
-        return "15Min"
+        return "5Min"
     if days <= 30:
+        return "15Min"
+    if days <= 120:
         return "1Hour"
     return "1Day"
+
+
+def cap_days(days: float, timeframe: str) -> float:
+    """Clamp the window so a fine timeframe can't request an enormous history."""
+    return min(days, _MAX_DAYS.get(timeframe, 3650))
 
 
 def get_bars(symbol: str, days: float, timeframe: str | None = None) -> list[dict]:

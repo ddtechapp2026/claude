@@ -300,6 +300,7 @@ class BacktestIn(BaseModel):
     strategy_text: Optional[str] = None   # plain English -> spec (if no from_bot)
     from_bot: Optional[int] = None        # copy an existing bot's strategy
     days: float = 30
+    timeframe: str = "auto"               # "auto" or 1Min/5Min/15Min/1Hour/1Day
     starting_cash: float = 10000
     max_trade_usd: float = 1000
     stop_loss_pct: float = 5              # percent
@@ -325,8 +326,17 @@ def api_backtest(body: BacktestIn) -> JSONResponse:
     else:
         raise HTTPException(400, "provide strategy_text or from_bot")
 
+    # Resolve timeframe (finest available is 1-minute) and cap the window so a
+    # fine granularity can't fetch a runaway number of bars.
+    tf = body.timeframe if body.timeframe in market.TIMEFRAMES else market.timeframe_for_days(body.days)
+    eff_days = market.cap_days(body.days, tf)
+    note = None
+    if eff_days < body.days:
+        note = (f"Window shortened to the most recent {eff_days:g} days: {tf} bars over "
+                f"{body.days:g} days is too many to fetch/replay. Use a coarser timeframe "
+                f"for a longer window.")
     try:
-        bars = market.get_bars(body.symbol, body.days)
+        bars = market.get_bars(body.symbol, eff_days, timeframe=tf)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"error": f"could not fetch history: {exc}"}, status_code=200)
 
@@ -339,7 +349,9 @@ def api_backtest(body: BacktestIn) -> JSONResponse:
     )
     result["spec_summary"] = strategy_engine.describe(spec)
     result["source"] = source
-    result["timeframe"] = market.timeframe_for_days(body.days)
+    result["timeframe"] = tf
+    if note:
+        result["note"] = note
     return JSONResponse(result)
 
 

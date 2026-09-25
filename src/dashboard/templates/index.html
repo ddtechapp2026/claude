@@ -129,12 +129,21 @@ function renderBacktestForm(){
       <div><label>Copy settings from a bot (optional)</label><select id="bt-frombot" onchange="btPrefill()">${botCopyOptions()}</select></div>
       <div><label>Crypto</label><select id="bt-symbol">${symbolOptions('BTC/USD').replace('Auto — pick any crypto','(pick a crypto)')}</select></div>
       <div><label>History length</label><select id="bt-days">
-        <option value="3">3 days (15-min bars)</option>
-        <option value="7">1 week (15-min)</option>
-        <option value="30" selected>1 month (hourly)</option>
-        <option value="90">3 months (daily)</option>
-        <option value="180">6 months (daily)</option>
-        <option value="365">1 year (daily)</option>
+        <option value="1">1 day</option>
+        <option value="3">3 days</option>
+        <option value="7">1 week</option>
+        <option value="30" selected>1 month</option>
+        <option value="90">3 months</option>
+        <option value="180">6 months</option>
+        <option value="365">1 year</option>
+      </select></div>
+      <div><label>Bar granularity</label><select id="bt-tf">
+        <option value="auto" selected>Auto (by length)</option>
+        <option value="1Min">1 minute (finest)</option>
+        <option value="5Min">5 minutes</option>
+        <option value="15Min">15 minutes (matches live bots)</option>
+        <option value="1Hour">1 hour</option>
+        <option value="1Day">1 day</option>
       </select></div>
       <div><label>Starting cash (USD)</label><input id="bt-cash" type="number" value="10000"></div>
       <div><label>Biggest trade (USD)</label><input id="bt-max" type="number" value="1000"></div>
@@ -165,6 +174,7 @@ function btPrefill(){
 async function runBacktest(){
   const body={
     symbol:el("bt-symbol").value, days:parseFloat(el("bt-days").value),
+    timeframe: el("bt-tf").value,
     from_bot: parseInt(el("bt-frombot").value)||null,
     strategy_text: el("bt-text").value,
     starting_cash:parseFloat(el("bt-cash").value), max_trade_usd:parseFloat(el("bt-max").value),
@@ -192,8 +202,9 @@ function renderBacktestResult(r){
     ["Fees paid", `<span class="neg">${fmtUsd(s.fees_paid)}</span>`],
   ];
   el("bt-results").innerHTML=`
+    ${r.note?`<div class="banner warn">${r.note}</div>`:''}
     <div class="panel"><div class="muted" style="font-size:13px">Strategy (${r.source}): ${r.spec_summary}<br>
-      ${s.bars} ${r.timeframe} bars · ${fmtTime(s.from)} → ${fmtTime(s.to)}</div></div>
+      ${s.bars} × ${r.timeframe} bars · ${fmtTime(s.from)} → ${fmtTime(s.to)}</div></div>
     <div class="grid">${cards.map(([l,v])=>`<div class="card"><div class="label">${l}</div><div class="value">${v}</div></div>`).join("")}</div>
     <div class="panel"><h2>Equity curve (backtest)</h2><canvas id="btChart" style="max-height:280px"></canvas></div>
     <div class="panel overflow"><h2>Simulated trades</h2>

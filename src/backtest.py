@@ -10,12 +10,15 @@ from __future__ import annotations
 
 from . import strategy_engine
 
-_WARMUP = 50  # bars to let indicators form before trading
+_WARMUP = 50      # bars to let indicators form before trading
+_MAX_BARS = 12000  # keep the O(n) replay fast; trims to the most recent bars
 
 
 def run_backtest(bars: list[dict], *, spec: dict, starting_cash: float, max_trade_usd: float,
                  stop_pct: float, tp_pct: float, fee_pct: float, size_fraction: float,
                  ai_control: bool) -> dict:
+    if len(bars) > _MAX_BARS:
+        bars = bars[-_MAX_BARS:]   # keep the most recent bars
     closes = [float(b["c"]) for b in bars]
     times = [b["t"] for b in bars]
     n = len(closes)
